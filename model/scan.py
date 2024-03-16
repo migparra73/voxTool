@@ -4,7 +4,7 @@ from traits.api import HasTraits , CArray, Instance,on_trait_change
 from collections import OrderedDict
 import logging
 import json
-import interpolator
+import model.interpolator as interpolator # This is a local module, but still needs to be imported via the model module
 import re
 
 log = logging.getLogger()
@@ -262,7 +262,7 @@ class Lead(object):
         if len(self.contacts) == 0:
             return '1', (1, 1), 1
 
-        last_contact = self.contacts.values()[-1]
+        last_contact = list(self.contacts.values())[-1]
 
         last_label = last_contact.label
         last_num = int(re.findall(r"\d+", last_label)[-1])
@@ -546,12 +546,12 @@ class CT(object):
         self.filename = img_file
         log.debug("Loading {}".format(img_file))
         img = nib.load(self.filename)
-        self.data = img.get_data().squeeze()
-        self.brainmask = np.zeros(img.get_data().shape, bool)
+        self.data = img.get_fdata().squeeze()
+        self.brainmask = np.zeros(img.get_fdata().shape, bool)
         self.affine = img.affine[:3,:]
 
     def add_mask(self, filename):
-        mask = nib.load(filename).get_data()
+        mask = nib.load(filename).get_fdata()
         self.brainmask = mask
 
     def interpolate(self, lead_label):
@@ -611,25 +611,26 @@ class CT(object):
         except KeyError:
             raise KeyError('Unknown file format %s'%format_)
 
-    def to_vox_mom(self,fname,include_bipolar=False):
+
+    def to_vox_mom(self, fname, include_bipolar=False):
         csv_out = []
-        for lead in sorted(self.get_leads().values(),cmp=lambda x,y:cmp(x.label.upper(),y.label.upper()) ):
+        for lead in sorted(self.get_leads().values(), key=lambda x: x.label.upper()):
             ltype = lead.type_
             dims = lead.dimensions
-            for contact in sorted(lead.contacts.keys(),cmp=lambda x,y: cmp(int(x),int(y))):
+            for contact in sorted(lead.contacts.keys(), key=lambda x: int(x)):
                 voxel = np.rint(lead.contacts[contact].center)
-                contact_name = lead.label+contact
-                csv_out += "%s\t%s\t%s\t%s\t%s\t%s %s\n"%(
-                    contact_name,voxel[0],voxel[1],voxel[2],ltype,dims[0],dims[1]
-                )
+                contact_name = lead.label + contact
+                csv_out.append("%s\t%s\t%s\t%s\t%s\t%s %s\n" % (
+                    contact_name, voxel[0], voxel[1], voxel[2], ltype, dims[0], dims[1]
+                ))
             if include_bipolar:
                 pairs = self.calculate_pairs(lead)
                 for pair in pairs:
-                    voxel = np.rint((pair[0].center+pair[1].center)/2)
-                    pair_name = '{lead.label}{pair[0].label}-{lead.label}{pair[1].label}'.format(lead=lead,pair=pair)
-                    csv_out += "%s\t%s\t%s\t%s\t%s\t%s %s\n"%(
-                        pair_name,voxel[0],voxel[1],voxel[2],ltype,dims[0],dims[1])
-        with open(fname,'w') as vox_mom:
+                    voxel = np.rint((pair[0].center + pair[1].center) / 2)
+                    pair_name = '{}{}-{}{}'.format(lead.label, pair[0].label, lead.label, pair[1].label)
+                    csv_out.append("%s\t%s\t%s\t%s\t%s\t%s %s\n" % (
+                        pair_name, voxel[0], voxel[1], voxel[2], ltype, dims[0], dims[1]))
+        with open(fname, 'w') as vox_mom:
             vox_mom.writelines(csv_out)
 
 

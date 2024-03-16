@@ -1,10 +1,10 @@
 import os
-
-os.environ['ETS_TOOLKIT'] = 'qt4'
+from traits.etsconfig.api import ETSConfig
+ETSConfig.toolkit = 'qt'
 
 from pyface.qt import QtGui, QtCore
 from model.scan import CT
-from slice_viewer import SliceViewWidget
+from view.slice_viewer import SliceViewWidget
 from mayavi.core.ui.api import MayaviScene, MlabSceneModel, \
     SceneEditor
 from mayavi import mlab
@@ -132,7 +132,7 @@ class PylocControl(object):
         Callback for "Load Scan" button. See :load_ct:
         :return:
         """
-        file_ = QtGui.QFileDialog().getOpenFileName(None, 'Select Scan', '.', '(*)')
+        (file_, filter_) = QtGui.QFileDialog().getOpenFileName(None, 'Select Scan', '.', '(*)')
         if file_:
             self.load_ct(filename=file_)
             self.view.task_bar.define_leads_button.setEnabled(True)
@@ -182,7 +182,7 @@ class PylocControl(object):
         Callback to save the localized coordinates in either JSON or text format
         :return:
         """
-        file,file_filter = QtGui.QFileDialog().getSaveFileNameAndFilter(None,'Save as:',os.path.join(os.getcwd(),'voxel_coordinates.json'),
+        file,file_filter = QtGui.QFileDialog().getSaveFileName(None,'Save as:',os.path.join(os.getcwd(),'voxel_coordinates.json'),
                                                             'JSON (*.json);;TXT (*.txt)','JSON (*.json)')
         if file:
             self.ct.saveas(file,os.path.splitext(file)[-1],self.view.task_bar.bipolar_box.isChecked())
@@ -560,6 +560,8 @@ class ContactPanelWidget(QtGui.QWidget):
 
     def lead_changed(self):
         lead_txt = self.label_dropdown.currentText()
+        if(lead_txt == ''):
+            return # No leads to select
         self.controller.set_selected_lead(lead_txt.split()[0])
         self.lead_group.setText("0")
         self.lead_location_changed()
@@ -599,6 +601,7 @@ class ContactPanelWidget(QtGui.QWidget):
             self.set_lead_labels(labels)
 
     def set_lead_labels(self, lead_labels):
+        # Clear the dropdown, and disable the update callback here
         self.label_dropdown.clear()
         for lead_name in lead_labels:
             self.label_dropdown.addItem(lead_name)
@@ -989,17 +992,63 @@ class CloudView(object):
                                    colormap=self.colormap,
                                    opacity=.5,
                                    vmax=1, vmin=0,
-                                   scale_mode='none', scale_factor=1)
+                                   scale_mode='none', scale_factor=1
+                                   )
         self._plot.mlab_source.set(scalars=self.get_colors(labels, x, y, z))
 
     def unplot(self):
         self._plot.mlab_source.reset(x=[], y=[], z=[], scalars=[])
-
+    '''
     def update(self):
         labels, x, y, z = self.ct.xyz(self.label)
         log.debug("Updating cloud {} with {} points".format(self.label, len(labels)))
         self._plot.mlab_source.reset(
             x=x, y=y, z=z, scalars=self.get_colors(labels, x, y, z))
+    '''
+    def update(self):
+        labels, x, y, z = self.ct.xyz(self.label)
+        # Ensure x, y, z, and colors are numpy arrays of a compatible type, e.g., np.float32
+
+        log.debug("Updating cloud {} with {} points".format(self.label, len(labels)))
+        #self._plot.mlab_source.set(x=x, y=y, z=z, scalars=self.get_colors(labels, x, y, z))    
+#        self._plot.mlab_source.reset(x=x, y=y, z=z, scalars=self.get_colors(labels, x, y, z))
+
+        #Save camera settings
+        position = self._plot.scene.camera.position
+        focal_point = self._plot.scene.camera.focal_point
+        view_angle = self._plot.scene.camera.view_angle
+        clipping_range = self._plot.scene.camera.clipping_range
+        parallel_scale = self._plot.scene.camera.parallel_scale
+        #Disable rendering
+        self._plot.scene.disable_render = True
+        # Delete old plot
+        self._plot.remove()
+        #Generate new plot
+        self._plot = mlab.points3d(x, y, z,  # self.get_colors(labels, x, y, z),
+                                   mode='cube', resolution=3,
+                                   colormap=self.colormap,
+                                   opacity=.5,
+                                   vmax=1, vmin=0,
+                                   scale_mode='none', scale_factor=1
+                                   )
+        #Reset camera
+        self._plot.scene.camera.position = position
+        self._plot.scene.camera.focal_point = focal_point
+        self._plot.scene.camera.view_angle = view_angle
+        self._plot.scene.camera.clipping_range = clipping_range
+        self._plot.scene.camera.parallel_scale = parallel_scale
+        #Re-enable rendering
+        self._plot.scene.disable_render = False
+        # Force a render
+        self._plot.mlab_source.set(scalars=self.get_colors(labels, x, y, z))
+        self._plot.scene.render()
+        # Display the plot with the previous camera position
+        self._plot.scene.camera.position = position
+        self._plot.scene.camera.focal_point = focal_point
+        self._plot.scene.camera.view_angle = view_angle
+        self._plot.scene.camera.clipping_range = clipping_range
+        self._plot.scene.camera.parallel_scale = parallel_scale
+        self._plot.scene.render()
 
 
 class AxisView(CloudView):
