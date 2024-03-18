@@ -5,6 +5,7 @@ from collections import OrderedDict
 import logging
 import json
 import model.interpolator as interpolator # This is a local module, but still needs to be imported via the model module
+from model.gridmap_parser import GridMapParser
 import re
 
 log = logging.getLogger()
@@ -38,7 +39,7 @@ class PointCloud(HasTraits):
         self.coordinates = np.array([[], [], []]).T
 
     def set_coordinates(self, coordinates):
-        self.coordinates = np.array([tuple(coord) for coord in coordinates])
+        self.coordinates = np.array(coordinates)
 
     def get_coordinates(self, mask=None):
         if mask is None:
@@ -532,9 +533,11 @@ class CT(object):
         self._selection = PointMask("_selected", self._points)
         self.selected_lead_label = ""
         self.filename = None
+        self.originalData = None
         self.data = None
         self.brainmask = None
         self.affine = None
+        self.gridmap = None
 
         self.SAVE_METHODS = {
             '.json': self.to_json,
@@ -546,7 +549,9 @@ class CT(object):
         self.filename = img_file
         log.debug("Loading {}".format(img_file))
         img = nib.load(self.filename)
-        self.data = img.get_fdata().squeeze()
+        x = img.get_fdata()
+        self.data = x.squeeze()
+        self.originalData = x.squeeze()
         self.brainmask = np.zeros(img.get_fdata().shape, bool)
         self.affine = img.affine[:3,:]
 
@@ -581,7 +586,7 @@ class CT(object):
                     lead_loc=contact.lead_location,
                     coordinate_spaces=dict(
                         ct_voxel=dict(
-                            raw=list(contact.center.astype(int))
+                            raw=contact.center.tolist() # This is a numpy array, which is not serializable
                         )
                     )
                 ))
@@ -649,7 +654,8 @@ class CT(object):
         return pairs
 
     def to_json(self, filename,include_bipolar=False):
-        json.dump(self.to_dict(include_bipolar), open(filename, 'w'),indent=2)
+        data = self.to_dict(include_bipolar)
+        json.dump(data, open(filename, 'w'),indent=2)
 
 
     def from_dict(self, input_dict):
@@ -716,11 +722,14 @@ class CT(object):
             raise PylocModelException("Data is not loaded")
         threshold_value = np.percentile(self.data, self.threshold)
         logging.debug("Thresholding at an intensity of {}".format(threshold_value))
-        mask = self.data >= threshold_value
+        mask = self.originalData >= threshold_value
         logging.debug("Getting super-threshold indices")
         indices = np.array(mask.nonzero()).T
+        logging.debug("Setting coordinates")        
         self._points.set_coordinates(indices)
+        logging.debug("Setting _selection")
         self._selection = PointMask("_selection", self._points)
+        logging.debug("Done setting threshold")
 
     def select_points(self, point_mask):
         self._selection.clear()
@@ -779,3 +788,9 @@ class CT(object):
 
     def clear_selection(self):
         self._selection.clear()
+
+    def load_gridmap(self, filename):
+        self.gridmap = GridMapParser(filename)
+        self.gridmap.parse()
+        for electrode in self.gridmap.electrodeList:
+            self._leads[electrode.label] = Lead(self._points, electrode.label, lead_type='D', dimensions= (electrode.numberOfChannels, 1)) 

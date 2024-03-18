@@ -20,7 +20,7 @@ import re
 from collections import OrderedDict
 
 log = logging.getLogger()
-log.setLevel(0)
+log.setLevel(1)
 
 
 def add_labeled_widget(layout, label, *widgets):
@@ -38,22 +38,29 @@ class PylocControl(object):
     Main class for running VoxTool.
     """
     def __init__(self, config=None):
+        log.debug("Initializing PylocControl")
         if config == None:
             config = yaml.load(open("../model/config.yml"))
 
+        log.debug("Config: {}".format(config))
+        log.debug("Starting application")
         self.app = QtGui.QApplication.instance() #: The underlying application. Runs automatically
         self.view = PylocWidget(self, config) #: The base object for the GUI
+        log.debug("View created")
         self.view.show()
 
+        log.debug("View shown")
         self.window = QtGui.QMainWindow()
         self.window.setCentralWidget(self.view)
         self.window.show()
+        log.debug("Window shown")
 
         self.lead_window = None #: See ..self.define_leads and ..LeadDefinitionWidget
 
         self.ct = None #: See self.load_ct; instance of ..scan.CT
         self.config = config # Global configuration file
 
+        log.debug("Assigning callbacks and shortcuts")
         self.assign_callbacks()
         self.assign_shortcuts()
 
@@ -72,72 +79,99 @@ class PylocControl(object):
         Callback for "Interpolate" button in lead panel
         :return:
         """
+        log.debug("Interpolating selected lead")
         self.ct.interpolate(self.selected_lead.label)
+        log.debug("Interpolated, updating cloud...")
         self.view.update_cloud('_leads')
+        log.debug("Cloud updated, updating contact panel...")
         self.view.contact_panel.set_chosen_leads(self.ct.get_leads())
+        log.debug("Contact panel updated, interpolate_selected_lead complete.")
 
     def add_micro_contacts(self):
         """
         Callback for "Add micro_contact" button in lead panel
         :return:
         """
+        log.debug("Adding micro contacts")
         self.ct.add_micro_contacts()
+        log.debug("Micro contacts added, updating cloud...")
         self.view.update_cloud('_leads')
+        log.debug("Cloud updated, updating contact panel...")
         self.view.contact_panel.set_chosen_leads(self.ct.get_leads())
+        log.debug("Contact panel updated, add_micro_contacts complete.")
 
     def toggle_seeding(self):
         """
         Callback for "Seeding" button in lead panel
         :return:
         """
+        log.debug("Toggling seeding")
         self.seeding = not self.seeding
         if self.seeding:
+            log.debug("Seeding enabled")
             self.display_seed_contact()
         else:
+            log.debug("Seeding disabled")
             self.view.display_message("")
+        log.debug("Seeding toggled, seeding is now {}".format(self.seeding))
 
     def display_seed_contact(self):
+        log.debug("Displaying seed contact")
         next_label = self.selected_lead.next_contact_label()
+        log.debug("Next label: {}".format(next_label))
         next_loc = self.selected_lead.next_contact_loc()
+        log.debug("Next location: {}".format(next_loc))
 
+        log.debug("Updating view with message...")
         msg = "Click on contact {}{} ({}, {})".format(self.selected_lead.label, next_label, *next_loc)
         self.view.display_message(msg)
+        log.debug("View updated with message, display_seed_contact complete.")
 
     def set_lead_location(self, lead_location, lead_group):
+        log.debug("Setting lead location to {} and group to {}".format(lead_location, lead_group))
         self.lead_location = lead_location
         self.lead_group = lead_group
+        log.debug("Lead location set to {} and group to {}, set_lead_location done".format(lead_location, lead_group))
 
     def set_contact_label(self, label):
+        log.debug("Setting contact label to {}".format(label))
         self.contact_label = label
         self.lead_group = 0
+        log.debug("Contact label set to {}, set_contact_label done".format(label))
 
     def set_selected_lead(self, lead_name):
         log.debug("Setting selected lead to {}".format(lead_name))
         try:
+            log.debug("Getting lead {}".format(lead_name))
             self.selected_lead = self.ct.get_lead(lead_name)
+            log.debug("Updating lead dimensions in contact panel...")
             dims = self.selected_lead.dimensions
+            log.debug("Lead dimensions: {}".format(dims))
             self.view.contact_panel.update_lead_dims(*dims)
+            log.debug("Lead dimensions updated")
         except KeyError:
             log.error("Lead {} does not exist".format(lead_name))
         self.select_next_contact_label()
+        log.debug("Selected lead set to {}, set_selected_lead done".format(lead_name))
 
     def toggle_RAS_axes(self,state):
+        log.debug("Toggling RAS axes")
         self.view.toggle_RAS()
-
-
-
 
     def prompt_for_ct(self):
         """
         Callback for "Load Scan" button. See :load_ct:
         :return:
         """
+        log.debug("Prompting for CT")
         (file_, filter_) = QtGui.QFileDialog().getOpenFileName(None, 'Select Scan', '.', '(*)')
         if file_:
+            log.debug("Loading CT from file {}".format(file_))
             self.load_ct(filename=file_)
             self.view.task_bar.define_leads_button.setEnabled(True)
             self.view.task_bar.save_button.setEnabled(True)
             self.view.task_bar.load_coord_button.setEnabled(True)
+            self.view.task_bar.load_gridmap_file.setEnabled(True)
 
 
     def load_ct(self, filename):
@@ -146,31 +180,44 @@ class PylocControl(object):
         :param filename: The name of the CT file.
         :return:
         """
+        log.debug("Loading CT from file {}".format(filename))
         self.ct = CT(self.config)
+        log.debug("Loading CT...")
         self.ct.load(filename,self.config['ct_threshold'])
+        log.debug("CT loaded, updating view...")
         self.view.slice_view.set_label(filename)
         self.view.contact_panel.update_contacts()
         self.view.contact_panel.setEnabled(True)
+        log.debug("View updated, adding _ct, _leads and _selected clouds")
+        log.debug("Adding _ct cloud...")
         self.view.add_cloud(self.ct, '_ct', callback=self.select_coordinate)
+        log.debug("Adding _leads cloud...")
         self.view.add_cloud(self.ct, '_leads')
+        log.debug("Adding _selected cloud...")
         self.view.add_cloud(self.ct, '_selected')
+        log.debug("Clouds added, updating slices...")
         self.view.add_RAS(self.ct)
         self.view.set_slice_scan(self.ct.data)
+        log.debug("Slices updated, load_ct done.")
 
     def exec_(self):
+        log.debug("Running application")
         self.app.exec_()
 
     def assign_callbacks(self):
+        log.debug("Assigning callbacks")
         self.view.task_bar.load_scan_button.clicked.connect(self.prompt_for_ct)
         self.view.task_bar.define_leads_button.clicked.connect(self.define_leads)
         self.view.task_bar.save_button.clicked.connect(self.save_coordinates)
         self.view.task_bar.load_coord_button.clicked.connect(self.load_coordinates)
+        self.view.task_bar.load_gridmap_file.clicked.connect(self.load_gridmap_file)
 
     def assign_shortcuts(self):
         """
         Constructs keyboard shortcuts and assigns them to methods
         :return:
         """
+        log.debug("Assigning shortcuts")
         QtGui.QShortcut(QtGui.QKeySequence('S'),self.view).activated.connect(self.add_selection)
         QtGui.QShortcut(QtGui.QKeySequence('Ctrl+O'),self.view).activated.connect(self.prompt_for_ct)
         QtGui.QShortcut(QtGui.QKeySequence('Ctrl+Shift+O'),self.view).activated.connect(self.load_coordinates)
@@ -179,29 +226,56 @@ class PylocControl(object):
 
     def save_coordinates(self):
         """
-        Callback to save the localized coordinates in either JSON or text format
+        Callback to save the localized coordinates in only JSON or text format
         :return:
         """
-        file,file_filter = QtGui.QFileDialog().getSaveFileName(None,'Save as:',os.path.join(os.getcwd(),'voxel_coordinates.json'),
+        log.debug("Saving coordinates")
+        file,file_filter = QtGui.QFileDialog().getSaveFileName(None,'Save as:',os.path.join(os.getcwd(),'voxel_coordinates.txt'),
                                                             'JSON (*.json);;TXT (*.txt)','JSON (*.json)')
         if file:
+            log.debug("Saving to file {}".format(file))
             self.ct.saveas(file,os.path.splitext(file)[-1],self.view.task_bar.bipolar_box.isChecked())
+            log.debug("Saved to file {}".format(file))
+        log.debug("Save coordinates done.")
 
     def load_coordinates(self):
-        file = QtGui.QFileDialog().getOpenFileName(None, 'Select voxel_coordinates.json', '.', '(*.json)')
+        log.debug("Loading coordinates")
+        (file, filter) = QtGui.QFileDialog().getOpenFileName(None, 'Select voxel_coordinates.json', '.', '(*.json)')
         if file:
+            log.debug("Loading from file {}".format(file))
             self.ct.from_json(file)
+            log.debug("Loaded from file {}".format(file))
+            log.debug("Updating view, and adding _leads cloud...")
             self.view.update_cloud('_leads')
+            log.debug("_leads clouds updated, updating contact panel...")
             self.view.contact_panel.update_contacts()
+            log.debug("Contact panel updated, load_coordinates done.")
+    
+    def load_gridmap_file(self):
+        log.debug("Loading gridmap file")
+        (file, filter) = QtGui.QFileDialog().getOpenFileName(None, 'Select gridmap file', '.', '(*.map)')
+        if file:
+            log.debug("Loading from file {}".format(file))
+            self.ct.load_gridmap(file)
+            log.debug("Loaded from file {}".format(file))
+            log.debug("Updating view, and adding _leads cloud...")
+            self.view.update_cloud('_leads')
+            log.debug("_leads clouds updated, updating contact panel...")
+            self.view.contact_panel.update_contacts()
+            log.debug("Contact panel updated, load_gridmap_file done.")
 
     def define_leads(self):
         """
         Callback for "Define Leads" button
         :return:
         """
+        log.debug("Defining leads")
         self.lead_window = QtGui.QMainWindow()
+        log.debug("Creating LeadDefinitionWidget")
         lead_widget = LeadDefinitionWidget(self, self.config, self.view)
+        log.debug("Setting leads")
         lead_widget.set_leads(self.ct.get_leads())
+        log.debug("Setting central widget")
         self.lead_window.setCentralWidget(lead_widget)
         self.lead_window.show()
         self.lead_window.resize(200, lead_widget.height())
@@ -216,28 +290,37 @@ class PylocControl(object):
         :param allow_seed: ???
         :return:
         """
-        log.debug("Selecting near coordinate {}".format(coordinate))
+        log.debug("select_coordinate: Selecting near coordinate {}".format(coordinate))
         self.clicked_coordinate = coordinate
         self.selected_coordinate = coordinate
         radius = self.selected_lead.radius if not self.selected_lead is None else 5
+        log.debug("Selecting points near coordinate {} with radius {}".format(coordinate, radius))
         self.ct.select_points_near(coordinate, radius)
         if do_center:
-            log.debug("Centering...")
+            log.debug("Centering selection")
             self.center_selection(self.config['selection_iterations'], radius)
+        log.debug("Updating view...")
         panel = self.view.contact_panel
         for i, (_,contact) in enumerate(panel.contacts):
             if self.clicked_coordinate in contact:
+                log.debug("Setting current row in contact list to {}".format(i))
                 panel.contact_list.setCurrentRow(i)
                 break
         else:
+            log.debug("No contact found")
             panel.contact_list.setCurrentRow(panel.contact_list.currentRow(),QtGui.QItemSelectionModel.Deselect)
 
         if not np.isnan(self.selected_coordinate).all():
             if self.seeding and allow_seed:
+                log.debug("Seeding from coordinate {}".format(self.selected_coordinate))
                 log.info("Seeding from coordinate {}".format(self.selected_coordinate))
                 self.selected_lead.seed_next_contact(self.selected_coordinate)
+                log.debug("Seeding done, updating view...")
                 self.ct.clear_selection()
+                log.debug("Clearing selection")
+                log.debug("Updating view...")
                 self.selected_coordinate = np.zeros((3,))
+                log.debug
                 self.view.update_cloud('_leads')
                 self.select_next_contact_label()
                 self.view.contact_panel.set_chosen_leads(self.ct.get_leads())
@@ -369,6 +452,7 @@ class PylocWidget(QtGui.QWidget):
         self.cloud_widget.plot_cloud(label)
 
     def add_cloud(self, ct, label, callback=None):
+        log.debug("PylocWidget.add_cloud: Adding cloud {} to view".format(label))
         self.cloud_widget.add_cloud(ct, label, callback)
 
     def add_RAS(self,ct,callback=None):
@@ -429,7 +513,8 @@ class ContactPanelWidget(QtGui.QWidget):
 
         self.labels = OrderedDict()
         self.label_dropdown = NoScrollComboBox()
-        self.label_dropdown.setMaximumWidth(75)
+        self.label_dropdown.setMinimumWidth(150)
+        self.label_dropdown.setMaximumWidth(200)
         add_labeled_widget(lead_layout,
                                 "Label :", self.label_dropdown)
         self.contact_name = QtGui.QLineEdit()
@@ -797,7 +882,7 @@ class ThresholdWidget(QtGui.QWidget):
         if self.controller.ct:
             self.controller.ct.set_threshold(self.config['ct_threshold'])
             for label in ['_ct','_leads','_selection']:
-                self.controller.view.update_clouds()
+                self.controller.view.update_cloud(label)
 
     def update_threshold_value(self,value):
         self.config['ct_threshold']= value
@@ -816,6 +901,9 @@ class TaskBarLayout(QtGui.QHBoxLayout):
         self.save_button=QtGui.QPushButton("Save as...")
         self.save_button.setEnabled(False)
         self.bipolar_box = QtGui.QCheckBox("Include Bipolar Pairs")
+        # Sets up the button to load a gridmap file.
+        self.load_gridmap_file = QtGui.QPushButton("Load Gridmap File")
+        self.load_gridmap_file.setEnabled(False)
 
         save_layout = QtGui.QVBoxLayout()
         save_layout.addWidget(self.save_button)
@@ -827,7 +915,7 @@ class TaskBarLayout(QtGui.QHBoxLayout):
         self.addWidget(self.load_coord_button)
         self.addLayout(save_layout)
         self.addWidget(self.clean_button)
-
+        self.addWidget(self.load_gridmap_file)
 
 class CloudWidget(QtGui.QWidget):
     def __init__(self, controller, config, parent=None):
@@ -848,6 +936,7 @@ class CloudWidget(QtGui.QWidget):
         self.viewer.update_cloud(label)
 
     def add_cloud(self, ct, label, callback=None):
+        log.debug("CloudWidget.add_cloud: Adding cloud {} to view".format(label))
         self.viewer.add_cloud(ct, label, callback)
 
     def add_RAS(self,ct,callback=None):
@@ -897,7 +986,9 @@ class CloudViewer(HasTraits):
         self.clouds[label].unplot()
 
     def add_cloud(self, ct, label, callback=None):
+        log.debug("CloudViewer.add_cloud: Adding cloud {} to view".format(label))
         if label in self.clouds:
+            log.debug("CloudViewer.add_cloud: Cloud {} already exists, removing...".format(label))
             self.remove_cloud(label)
         self.clouds[label] = CloudView(ct, label, self.config, callback)
         self.clouds[label].plot()
@@ -951,13 +1042,20 @@ class CloudView(object):
             return self.config['colormaps']['default']
 
     def __init__(self, ct, label, config, callback=None):
+        log.debug("CloudView.__init__: Setting ct")
         self.ct = ct
+        log.debug("CloudView.__init__: Setting config")
         self.config = config
+        log.debug("CloudView.__init__: Setting label")
         self.label = label
+        log.debug("CloudView.__init__: Setting colormap")
         self.colormap = self.get_colormap(label)
+        log.debug("CloudView.__init__: Setting callback")
         self._callback = callback if callback else lambda *_: None
+        log.debug("CloudView.__init__: Setting plot and glyph to None")
         self._plot = None
         self._glyph_points = None
+        log.debug("CloudView.__init__: Done")
 
     def callback(self, picker):
         return self._callback(np.array(picker.pick_position))
