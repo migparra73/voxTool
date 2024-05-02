@@ -881,7 +881,7 @@ class ThresholdWidget(QtGui.QWidget):
     def update_pressed(self):
         if self.controller.ct:
             self.controller.ct.set_threshold(self.config['ct_threshold'])
-            for label in ['_ct','_leads','_selection']:
+            for label in ['_ct','_leads','_selected']:
                 self.controller.view.update_cloud(label)
 
     def update_threshold_value(self,value):
@@ -1121,6 +1121,7 @@ class CloudView(object):
         self._plot.scene.disable_render = True
         # Delete old plot
         self._plot.remove()
+        #mlab.clf()
         #Generate new plot
         self._plot = mlab.points3d(x, y, z,  # self.get_colors(labels, x, y, z),
                                    mode='cube', resolution=3,
@@ -1161,14 +1162,23 @@ class AxisView(CloudView):
         center = np.array([0.5*(coords[:,i].max() + coords[:,i].min()) for i in range(3)])
         u,v,w,t = self.ct.affine.T
         max_dist = np.abs(coords-center).max()
+        # axis = [1, 0 , 0] this refers to R and L labeling.
+        # axis = [0, 1, 0] this refers to A and P labeling.
+        # axis = [0, 0, 1] this refers to S and I labeling.
+        
+        name_pair_list = [['R','L'],['A','P'],['S','I']]
 
-        for i,(axis,name_pair) in enumerate(zip((u,v,w),(('R','L'),('A','P'),('S','I')))):
+        for i, axis in enumerate(zip((u,v,w))):
+            selectedAxis = int(np.nonzero(axis)[1])
+            name_pair = name_pair_list[selectedAxis]
             for name in name_pair:
                 location  = center.copy()
                 if name is name_pair[0]:
-                    location[i] += max_dist*1.25 * np.sign(axis[i])
+                    loc = max_dist*1.25 * np.sign(axis[0][selectedAxis])
+                    location[i] += loc
                 else:
-                    location[i] -= max_dist * 1.25 * np.sign(axis[i])
+                    loc = max_dist*1.25 * np.sign(axis[0][selectedAxis])
+                    location[i] -= loc
                 color = [0.,0.,0.]
                 color[i] = 1.
                 letter = mlab.text3d(location[0], location[1], location[2], name, color=tuple(color), scale=self.scale,

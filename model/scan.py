@@ -793,4 +793,4 @@ class CT(object):
         self.gridmap = GridMapParser(filename)
         self.gridmap.parse()
         for electrode in self.gridmap.electrodeList:
-            self._leads[electrode.label] = Lead(self._points, electrode.label, lead_type='D', dimensions= (electrode.numberOfChannels, 1)) 
+            self._leads[electrode.label] = Lead(self._points, electrode.label, lead_type='D', dimensions= (electrode.numberOfChannels, 1), radius=2) 
