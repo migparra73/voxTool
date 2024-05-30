@@ -253,7 +253,7 @@ class PylocControl(object):
     
     def load_gridmap_file(self):
         log.debug("Loading gridmap file")
-        (file, filter) = QtGui.QFileDialog().getOpenFileName(None, 'Select gridmap file', '.', '(*.map)')
+        (file, filter) = QtGui.QFileDialog().getOpenFileName(None, 'Select gridmap file', '.', '(*)')
         if file:
             log.debug("Loading from file {}".format(file))
             self.ct.load_gridmap(file)
@@ -1165,26 +1165,39 @@ class AxisView(CloudView):
         # axis = [1, 0 , 0] this refers to R and L labeling.
         # axis = [0, 1, 0] this refers to A and P labeling.
         # axis = [0, 0, 1] this refers to S and I labeling.
-        
-        name_pair_list = [['R','L'],['A','P'],['S','I']]
-
-        for i, axis in enumerate(zip((u,v,w))):
-            selectedAxis = int(np.nonzero(axis)[1])
-            name_pair = name_pair_list[selectedAxis]
-            for name in name_pair:
-                location  = center.copy()
-                if name is name_pair[0]:
-                    loc = max_dist*1.25 * np.sign(axis[0][selectedAxis])
-                    location[i] += loc
-                else:
-                    loc = max_dist*1.25 * np.sign(axis[0][selectedAxis])
-                    location[i] -= loc
-                color = [0.,0.,0.]
-                color[i] = 1.
-                letter = mlab.text3d(location[0], location[1], location[2], name, color=tuple(color), scale=self.scale,
-                                     opacity=0.75,
-                                     )
-                self._plots.append(letter)
+        try:
+            name_pair_list = [['R','L'],['A','P'],['S','I']]
+            u = np.int32(np.sign(u))
+            v = np.int32(np.sign(v))
+            w = np.int32(np.sign(w))
+            for i, axis in enumerate(zip((u,v,w))):
+                # axis is a 3-tuple, find the index of the element which is closest to 1 (or -1)
+                axis = axis[0] # tuple to list
+                nonZero = np.nonzero(axis)
+                # Assert if there are more than one non-zero element
+                assert len(nonZero) == 1
+                selectedAxis = int(nonZero[0]) 
+                name_pair = name_pair_list[selectedAxis]
+                for name in name_pair:
+                    location  = center.copy()
+                    if name is name_pair[0]:
+                        loc = max_dist*1.25 * np.sign(axis[selectedAxis])
+                        location[i] += loc
+                    else:
+                        loc = max_dist*1.25 * np.sign(axis[selectedAxis])
+                        location[i] -= loc
+                    color = [0.,0.,0.]
+                    color[i] = 1.
+                    letter = mlab.text3d(location[0], location[1], location[2], name, color=tuple(color), scale=self.scale,
+                                         opacity=0.75,
+                                         )
+                    self._plots.append(letter)
+        except TypeError as e:
+            log.error("Could not plot RAS axes: {}".format(e))
+        except IndexError as e:
+            log.error("Could not plot RAS axes: {}".format(e))
+        except AssertionError as e:
+            log.error("Could not plot RAS axes: {}".format(e))
 
     def contains(self, picker):
         return False
