@@ -183,6 +183,11 @@ class Contact(object):
     def lead_location_str(self):
         return '({}, {})'.format(*self.lead_location)
 
+    def switch_RAS_LAS(self, x_max=256):
+        self.point_mask.mask = np.array([x_max - self.point_mask.mask[:, 0],
+                                         self.point_mask.mask[:, 1],
+                                         self.point_mask.mask[:, 2]]).T
+
 class MicroContact(Contact):
     """ Microcontacts are not necessarily visible in the CT scan, and so
     we need to define a contact class that lacks a point mask"""
@@ -492,7 +497,7 @@ class Lead(object):
         masks = [contact.point_mask for contact in self.contacts.values()]
         coords, _ = PointMask.combined(masks)
         return coords
-
+    
     def get_mask(self):
         masks = [contact.point_mask for contact in self.contacts.values()]
         full_mask = np.zeros(len(self.point_cloud.get_coordinates()), bool)
@@ -538,6 +543,8 @@ class CT(object):
         self.brainmask = None
         self.affine = None
         self.gridmap = None
+        self.centerCoord = None
+        self.coordSystem = 'RAS'
 
         self.SAVE_METHODS = {
             '.json': self.to_json,
@@ -622,9 +629,12 @@ class CT(object):
         for lead in sorted(self.get_leads().values(), key=lambda x: x.label.upper()):
             ltype = lead.type_
             dims = lead.dimensions
+            # If we are in LAS, we need to switch the x-coordinate
             for contact in sorted(lead.contacts.keys(), key=lambda x: int(x)):
                 voxel = np.rint(lead.contacts[contact].center)
                 contact_name = lead.label + contact
+                if self.coordSystem == 'LAS':
+                    voxel = np.array([self.shape[0] - voxel[0], voxel[1], voxel[2]])
                 csv_out.append("%s\t%s\t%s\t%s\t%s\t%s %s\n" % (
                     contact_name, voxel[0], voxel[1], voxel[2], ltype, dims[0], dims[1]
                 ))
@@ -793,4 +803,19 @@ class CT(object):
         self.gridmap = GridMapParser(filename)
         self.gridmap.parse()
         for electrode in self.gridmap.electrodeList:
-            self._leads[electrode.label] = Lead(self._points, electrode.label, lead_type='D', dimensions= (electrode.numberOfChannels, 1), radius=2) 
+            self._leads[electrode.label] = Lead(self._points, electrode.label, lead_type='D', dimensions= (electrode.numberOfChannels, 1), radius=2)
+
+    def switch_coordinate_system(self):
+        if(self.coordSystem == 'RAS'):
+            self.coordSystem = 'LAS'
+        else:
+            self.coordSystem = 'RAS'
+        logging.debug("Switching coordinate system to " + self.coordSystem)
+        self._points.coordinates = np.array([self.shape[0] - self._points.coordinates[:, 0],
+                                             self._points.coordinates[:, 1],
+                                             self._points.coordinates[:, 2]]).T
+        
+        # Now run through all the leads and swap the L and R (first) axis
+        for lead in self._leads.values():
+            for contact in lead.contacts.values():
+                contact.switch_RAS_LAS(self.shape[0])

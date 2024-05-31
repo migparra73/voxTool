@@ -64,7 +64,7 @@ class GridMapParser:
         header = lines[0].split(',')
         if(header[5] == 'ChannelID'):
             self.channelIDsPresent = True
-        for line in lines[1:-1]: # Skip the header
+        for line in lines[1:]: # Skip the header
             parts = line.split(',')
             if len(parts) < 7:
                 log.debug("GridMapParser.parse: Skipping incomplete line")

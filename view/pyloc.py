@@ -172,6 +172,7 @@ class PylocControl(object):
             self.view.task_bar.save_button.setEnabled(True)
             self.view.task_bar.load_coord_button.setEnabled(True)
             self.view.task_bar.load_gridmap_file.setEnabled(True)
+            self.view.task_bar.switch_coordinate_system.setEnabled(True)
 
 
     def load_ct(self, filename):
@@ -211,7 +212,15 @@ class PylocControl(object):
         self.view.task_bar.save_button.clicked.connect(self.save_coordinates)
         self.view.task_bar.load_coord_button.clicked.connect(self.load_coordinates)
         self.view.task_bar.load_gridmap_file.clicked.connect(self.load_gridmap_file)
+        self.view.task_bar.switch_coordinate_system.clicked.connect(self.switch_coordinate_system)
 
+    def switch_coordinate_system(self):
+        self.ct.switch_coordinate_system()
+        # Toggle a redraw of the CT, leads
+        self.view.update_clouds()
+        # Redraw the RAS axes with the update method
+        self.view.switch_RAS_LAS()
+    
     def assign_shortcuts(self):
         """
         Constructs keyboard shortcuts and assigns them to methods
@@ -457,6 +466,9 @@ class PylocWidget(QtGui.QWidget):
 
     def add_RAS(self,ct,callback=None):
         self.cloud_widget.add_RAS(ct,callback)
+
+    def switch_RAS_LAS(self):
+        self.cloud_widget.switch_RAS_LAS()
 
     def toggle_RAS(self):
         self.cloud_widget.toggle_RAS()
@@ -904,11 +916,12 @@ class TaskBarLayout(QtGui.QHBoxLayout):
         # Sets up the button to load a gridmap file.
         self.load_gridmap_file = QtGui.QPushButton("Load Gridmap File")
         self.load_gridmap_file.setEnabled(False)
+        self.switch_coordinate_system = QtGui.QPushButton("Switch Coordinate System")
+        self.switch_coordinate_system.setEnabled(False)
 
         save_layout = QtGui.QVBoxLayout()
         save_layout.addWidget(self.save_button)
         save_layout.addWidget(self.bipolar_box)
-
 
         self.addWidget(self.load_scan_button)
         self.addWidget(self.define_leads_button)
@@ -916,6 +929,7 @@ class TaskBarLayout(QtGui.QHBoxLayout):
         self.addLayout(save_layout)
         self.addWidget(self.clean_button)
         self.addWidget(self.load_gridmap_file)
+        self.addWidget(self.switch_coordinate_system)
 
 class CloudWidget(QtGui.QWidget):
     def __init__(self, controller, config, parent=None):
@@ -942,13 +956,16 @@ class CloudWidget(QtGui.QWidget):
     def add_RAS(self,ct,callback=None):
         self.viewer.add_RAS(ct,callback)
 
+    def switch_RAS_LAS(self):
+        self.viewer.switch_RAS_LAS()
+
     def toggle_RAS(self):
         RAS = self.viewer.RAS
         if RAS._plots and all([x.visible for x in RAS._plots]):
             RAS.hide()
         else:
             RAS.show()
-
+    
     def plot_cloud(self,label):
         self.viewer.plot_cloud(label)
 
@@ -996,6 +1013,10 @@ class CloudViewer(HasTraits):
     def add_RAS(self,ct,callback=None):
         self.RAS = AxisView(ct,self.config,callback)
         self.RAS.plot()
+
+    def switch_RAS_LAS(self):
+        RAS = self.RAS
+        RAS.update()
 
     def remove_cloud(self, label):
         self.clouds[label].unplot()
@@ -1167,6 +1188,9 @@ class AxisView(CloudView):
         # axis = [0, 0, 1] this refers to S and I labeling.
         try:
             name_pair_list = [['R','L'],['A','P'],['S','I']]
+            if (self.ct.coordSystem == 'LAS'):
+                # Swap the order of R and L
+                name_pair_list[0] = ['L', 'R']
             u = np.int32(np.sign(u))
             v = np.int32(np.sign(v))
             w = np.int32(np.sign(w))
@@ -1203,6 +1227,8 @@ class AxisView(CloudView):
         return False
 
     def update(self):
+        self.unplot()
+        self.plot()
         return
 
     def hide(self):
