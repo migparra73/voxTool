@@ -1,4 +1,5 @@
 import os
+import json
 from traits.etsconfig.api import ETSConfig
 ETSConfig.toolkit = 'qt'
 
@@ -16,6 +17,7 @@ import numpy as np
 import logging
 import yaml
 import re
+from datetime import datetime
 
 from collections import OrderedDict
 
@@ -37,6 +39,8 @@ class PylocControl(object):
     """
     Main class for running VoxTool.
     """
+    AUTOSAVE_FILE = "voxTool_autosave.json"
+    
     def __init__(self, config=None):
         log.debug("Initializing PylocControl")
         if config == None:
@@ -73,6 +77,62 @@ class PylocControl(object):
         self.lead_group = 0
 
         self.seeding = False #: Toggled by self.toggle_seeding
+
+        self.autosave_timer = QtCore.QTimer()
+        self.autosave_timer.timeout.connect(self.auto_save_state)
+        self.autosave_timer.start(10000)  # Autosave every 5 minutes
+        
+        # Try to recover on startup
+        self.try_recover_state()
+
+    def auto_save_state(self):
+        """Automatically saves current program state"""
+        try:
+            if not self.ct:
+                return
+                
+            state = {
+                'ct_file': self.ct.filename,
+                'threshold': self.ct.threshold,
+                'leads': self.ct.to_dict(),
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            with open(self.AUTOSAVE_FILE, 'w') as f:
+                json.dump(state, f, indent=2)
+                
+            log.debug(f"Auto-saved state to {self.AUTOSAVE_FILE}")
+            
+        except Exception as e:
+            log.error(f"Auto-save failed: {str(e)}")
+
+    def try_recover_state(self):
+        """Attempts to recover from auto-save file on startup"""
+        try:
+            if os.path.exists(self.AUTOSAVE_FILE):
+                log.info("Found auto-save file, attempting recovery")
+                
+                with open(self.AUTOSAVE_FILE, 'r') as f:
+                    state = json.load(f)
+                
+                # Load CT scan if it exists
+                if os.path.exists(state['ct_file']):
+                    self.load_ct(state['ct_file'])
+                    self.ct.set_threshold(state['threshold'])
+                    
+                    # Restore leads and contacts
+                    self.ct.from_dict(state['leads'])
+                    
+                    # Update UI
+                    self.view.update_clouds()
+                    self.view.contact_panel.update_contacts()
+                    
+                    log.info("Successfully recovered from auto-save")
+                else:
+                    log.warning("CT file not found, skipping recovery")
+                    
+        except Exception as e:
+            log.error(f"Recovery failed: {str(e)}")
 
     def interpolate_selected_lead(self):
         """
@@ -488,6 +548,12 @@ class PylocWidget(QtGui.QWidget):
     def update_lead_location(self, x, y):
         self.contact_panel.set_lead_location(x, y)
 
+    def closeEvent(self, event):
+        """Save state before closing"""
+        if self.task_bar.auto_save_checkbox.isChecked():
+            self.controller.auto_save_state()
+        super().closeEvent(event)
+
 class NoScrollComboBox(QtGui.QComboBox):
     """
     Subclass of QComboBox that doesn't interact with the scroll wheel.
@@ -674,7 +740,7 @@ class ContactPanelWidget(QtGui.QWidget):
         self.contacts = []
         for lead_name in sorted(leads.keys()):
             lead = leads[lead_name]
-            for contact_name in sorted(lead.contacts.keys(), key=lambda x: int(''.join(re.findall('\d+', x)))):
+            for contact_name in sorted(lead.contacts.keys(), key=lambda x: int(''.join(re.findall(r'\d+', x)))):
                 contact = lead.contacts[contact_name]
                 self.add_contact(lead, contact)
 
@@ -931,6 +997,18 @@ class TaskBarLayout(QtGui.QHBoxLayout):
         self.addWidget(self.load_gridmap_file)
         self.addWidget(self.switch_coordinate_system)
 
+        self.auto_save_checkbox = QtGui.QCheckBox("Enable Auto-save")
+        self.auto_save_checkbox.setChecked(True)
+        self.auto_save_checkbox.stateChanged.connect(self.toggle_autosave)
+        
+        save_layout.addWidget(self.auto_save_checkbox)
+        
+    def toggle_autosave(self, state):
+        if state == QtCore.Qt.Checked:
+            self.parent().controller.autosave_timer.start()
+        else:
+            self.parent().controller.autosave_timer.stop()
+
 class CloudWidget(QtGui.QWidget):
     def __init__(self, controller, config, parent=None):
         super(CloudWidget, self).__init__(parent)
@@ -961,7 +1039,7 @@ class CloudWidget(QtGui.QWidget):
 
     def toggle_RAS(self):
         RAS = self.viewer.RAS
-        if RAS._plots and all([x.visible for x in RAS._plots]):
+        if (RAS._plots and all([x.visible for x in RAS._plots])):
             RAS.hide()
         else:
             RAS.show()
@@ -1015,8 +1093,7 @@ class CloudViewer(HasTraits):
         self.RAS.plot()
 
     def switch_RAS_LAS(self):
-        RAS = self.RAS
-        RAS.update()
+        self.RAS.update()
 
     def remove_cloud(self, label):
         self.clouds[label].unplot()
@@ -1036,7 +1113,7 @@ class CloudViewer(HasTraits):
     def callback(self, picker):
         found = False
         for cloud in self.clouds.values():
-            if cloud.contains(picker):
+            if (cloud.contains(picker)):
                 if cloud.callback(picker):
                     return True
                 found = True
