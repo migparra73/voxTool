@@ -7,6 +7,7 @@ import json
 import model.interpolator as interpolator # This is a local module, but still needs to be imported via the model module
 from model.gridmap_parser import GridMapParser
 import re
+import scipy.ndimage as ndimage
 
 log = logging.getLogger()
 
@@ -545,6 +546,11 @@ class CT(object):
         self.gridmap = None
         self.centerCoord = None
         self.coordSystem = 'RAS'
+        self.originalShape = None
+        self.transformedShape = None
+        self.originalToTransformed = None
+        self.tranformedToOriginal = None
+        self.zoom_factor = None
 
         self.SAVE_METHODS = {
             '.json': self.to_json,
@@ -558,8 +564,29 @@ class CT(object):
         img = nib.load(self.filename)
         x = img.get_fdata()
         self.data = x.squeeze()
-        self.originalData = x.squeeze()
-        self.brainmask = np.zeros(img.get_fdata().shape, bool)
+        
+        # Find the dimensions of the data
+        dataShape = self.data.shape
+        # In the z direction, we want to interpolate to match the dimensions of x and y.
+        # Find the smallest voxel size.
+        smallestVoxelSize = min(img.header.get_zooms())
+        desiredVoxelSize = np.ones(3) * smallestVoxelSize
+        voxel_spacings = img.header.get_zooms()
+        target_shape = list((int(round(s * z / d)) for s, z, d in zip(dataShape, voxel_spacings, desiredVoxelSize)))
+        zoom_factor = [t / s for t, s in zip(target_shape, dataShape)]
+        log.debug("Resampling scan to shape {}".format(target_shape))
+        # Save the original shape and the shape after resampling
+        #resampled_scan = ndimage.zoom(self.data, zoom_factor, order=3) # order 3 is cubic interpolation
+
+        self.originalShape = dataShape
+        self.transformedShape = target_shape
+        # Calculate the transformation matrices between the original and transformed spaces
+        self.originalToTransformed = np.eye(4)
+        self.originalToTransformed[:3,:3] = np.diag(zoom_factor)
+        self.tranformedToOriginal = np.linalg.inv(self.originalToTransformed)
+        # We will use the these matrices to save coordinates in the original space.
+        self.zoom_factor = img.header.get_zooms()
+        self.brainmask = np.zeros(self.data.shape, bool)
         self.affine = img.affine[:3,:]
 
     def add_mask(self, filename):
@@ -732,7 +759,7 @@ class CT(object):
             raise PylocModelException("Data is not loaded")
         threshold_value = np.percentile(self.data, self.threshold)
         logging.debug("Thresholding at an intensity of {}".format(threshold_value))
-        mask = self.originalData >= threshold_value
+        mask = self.data >= threshold_value
         logging.debug("Getting super-threshold indices")
         indices = np.array(mask.nonzero()).T
         logging.debug("Setting coordinates")        

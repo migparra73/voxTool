@@ -1106,8 +1106,10 @@ class CloudView(object):
 
     def plot(self):
         labels, x, y, z = self.ct.xyz(self.label)
-        self._plot = mlab.points3d(x, y, z,  # self.get_colors(labels, x, y, z),
-                                   mode='cube', resolution=3,
+        
+        self._plot = mlab.points3d(x, y, z,
+                                   # self.get_colors(labels, x, y, z),
+                                   mode='cube', resolution=16,
                                    colormap=self.colormap,
                                    opacity=.5,
                                    vmax=1, vmin=0,
@@ -1144,8 +1146,9 @@ class CloudView(object):
         self._plot.remove()
         #mlab.clf()
         #Generate new plot
-        self._plot = mlab.points3d(x, y, z,  # self.get_colors(labels, x, y, z),
-                                   mode='cube', resolution=3,
+        self._plot = mlab.points3d(x, y, z,
+                                   # self.get_colors(labels, x, y, z),
+                                   mode='cube', resolution=16,
                                    colormap=self.colormap,
                                    opacity=.5,
                                    vmax=1, vmin=0,
@@ -1191,6 +1194,10 @@ class AxisView(CloudView):
             if (self.ct.coordSystem == 'LAS'):
                 # Swap the order of R and L
                 name_pair_list[0] = ['L', 'R']
+            # If any elements of u, v or w are less than 1e-4, treat them as 0.
+            u[np.abs(u)<1e-4] = 0.0
+            v[np.abs(v)<1e-4] = 0.0
+            w[np.abs(w)<1e-4] = 0.0
             u = np.int32(np.sign(u))
             v = np.int32(np.sign(v))
             w = np.int32(np.sign(w))
