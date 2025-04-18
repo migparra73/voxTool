@@ -1,4 +1,4 @@
-name: vt_new
+name: vt
 channels:
 - conda-forge
 dependencies:
