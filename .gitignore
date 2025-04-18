@@ -1,2 +1,7 @@
 *.pyc
 *.code-workspace
+*autosave*
+*.csv
+*.map
+*.nii.gz
+*.json

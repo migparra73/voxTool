@@ -84,6 +84,9 @@ class PylocControl(object):
         
         # Try to recover on startup
         self.try_recover_state()
+        
+        self.mri = None
+        self.mri_filename = None
 
     def auto_save_state(self):
         """Automatically saves current program state"""
@@ -110,29 +113,55 @@ class PylocControl(object):
         """Attempts to recover from auto-save file on startup"""
         try:
             if os.path.exists(self.AUTOSAVE_FILE):
-                log.info("Found auto-save file, attempting recovery")
+                log.info("Found auto-save file, prompting user for recovery")
                 
+                # Get timestamp from autosave file
                 with open(self.AUTOSAVE_FILE, 'r') as f:
                     state = json.load(f)
+                    timestamp = state.get('timestamp', 'unknown time')
                 
-                # Load CT scan if it exists
-                if os.path.exists(state['ct_file']):
-                    self.load_ct(state['ct_file'])
-                    self.ct.set_threshold(state['threshold'])
-                    
-                    # Restore leads and contacts
-                    self.ct.from_dict(state['leads'])
-                    
-                    # Update UI
-                    self.view.update_clouds()
-                    self.view.contact_panel.update_contacts()
-                    
-                    log.info("Successfully recovered from auto-save")
+                # Ask user if they want to recover
+                reply = QtGui.QMessageBox.question(
+                    None,
+                    'Recover Session',
+                    f'Found auto-saved session from {timestamp}.\nWould you like to restore it?',
+                    QtGui.QMessageBox.Yes | QtGui.QMessageBox.No,
+                    QtGui.QMessageBox.Yes
+                )
+                
+                if reply == QtGui.QMessageBox.Yes:
+                    # Load CT scan if it exists
+                    if os.path.exists(state['ct_file']):
+                        self.load_ct(state['ct_file'])
+                        self.ct.set_threshold(state['threshold'])
+                        
+                        # Restore leads and contacts
+                        self.ct.from_dict(state['leads'])
+                        
+                        # Update UI
+                        self.view.update_clouds()
+                        self.view.contact_panel.update_contacts()
+                        
+                        log.info("Successfully recovered from auto-save")
+                        # Enable manual save thru UI
+                        self.view.task_bar.save_button.setEnabled(True)
+                    else:
+                        QtGui.QMessageBox.warning(
+                            None,
+                            'Recovery Error',
+                            'CT file not found, could not recover session'
+                        )
+                        log.warning("CT file not found, skipping recovery")
                 else:
-                    log.warning("CT file not found, skipping recovery")
+                    log.info("User chose not to recover auto-saved session")
                     
         except Exception as e:
             log.error(f"Recovery failed: {str(e)}")
+            QtGui.QMessageBox.warning(
+                None,
+                'Recovery Error',
+                f'Failed to recover auto-saved session: {str(e)}'
+            )
 
     def interpolate_selected_lead(self):
         """
@@ -273,6 +302,8 @@ class PylocControl(object):
         self.view.task_bar.load_coord_button.clicked.connect(self.load_coordinates)
         self.view.task_bar.load_gridmap_file.clicked.connect(self.load_gridmap_file)
         self.view.task_bar.switch_coordinate_system.clicked.connect(self.switch_coordinate_system)
+        self.view.task_bar.load_mri_button.clicked.connect(self.prompt_for_mri)
+        self.view.task_bar.mri_opacity.valueChanged.connect(self.update_mri_opacity)
 
     def switch_coordinate_system(self):
         self.ct.switch_coordinate_system()
@@ -471,6 +502,60 @@ class PylocControl(object):
             pass
         self.view.contact_panel.set_chosen_leads(self.ct.get_leads())
         self.view.update_cloud('_leads')
+        
+    def prompt_for_mri(self):
+        """Handler for Load MRI button"""
+        log.debug("Prompting for MRI")
+        mri_dir = QtGui.QFileDialog().getExistingDirectory(None, 'Select Freesurfer MRI Directory')
+        
+        if mri_dir:
+            aparc_file = os.path.join(mri_dir, 'mri/aparc+aseg.mgz')
+            if os.path.exists(aparc_file):
+                self.load_mri(aparc_file)
+            else:
+                QtGui.QMessageBox.warning(None, 'Error', 
+                    'Could not find aparc+aseg.mgz in selected directory')
+                
+    def load_mri(self, filename):
+        """Load MRI data and display"""
+        try:
+            import nibabel as nib
+            self.mri_filename = filename
+            self.mri = nib.load(filename)
+            
+            # Register MRI to CT space
+            # This would require implementation of registration logic
+            registered_mri = self.register_to_ct(self.mri)
+            
+            # Add MRI visualization
+            self.view.add_cloud(registered_mri, '_mri')
+            
+            # Enable opacity slider
+            self.view.task_bar.mri_opacity.setEnabled(True)
+            
+            log.debug(f"Loaded MRI from {filename}")
+            
+        except Exception as e:
+            log.error(f"Failed to load MRI: {str(e)}")
+            QtGui.QMessageBox.warning(None, 'Error', f'Failed to load MRI: {str(e)}')
+            
+    def register_to_ct(self, mri_img):
+        """
+        Register MRI to CT space using transformation matrices
+        This is a placeholder - actual implementation would need proper registration
+        """
+        # Implementation needed for:
+        # 1. Extract transformation matrices from CT and MRI
+        # 2. Compute registration transform
+        # 3. Apply transform to MRI data
+        # 4. Return registered data
+        pass
+
+    def update_mri_opacity(self, value):
+        """Update MRI visualization opacity"""
+        if '_mri' in self.view.cloud_widget.viewer.clouds:
+            opacity = value / 100.0
+            self.view.cloud_widget.viewer.clouds['_mri'].set_opacity(opacity)
 
 
 class PylocWidget(QtGui.QWidget):
@@ -1003,6 +1088,24 @@ class TaskBarLayout(QtGui.QHBoxLayout):
         
         save_layout.addWidget(self.auto_save_checkbox)
         
+        # Add MRI loading button
+        self.load_mri_button = QtGui.QPushButton("Load MRI")
+        self.load_mri_button.setEnabled(False)
+        
+        # Add opacity sliders
+        self.mri_opacity = QtGui.QSlider(QtCore.Qt.Horizontal)
+        self.mri_opacity.setRange(0, 100)
+        self.mri_opacity.setValue(50)
+        self.mri_opacity.setEnabled(False)
+        
+        mri_layout = QtGui.QVBoxLayout()
+        mri_layout.addWidget(self.load_mri_button)
+        mri_layout.addWidget(QtGui.QLabel("MRI Opacity:"))
+        mri_layout.addWidget(self.mri_opacity)
+        
+        # Add to main layout
+        self.addLayout(mri_layout)
+
     def toggle_autosave(self, state):
         if state == QtCore.Qt.Checked:
             self.parent().controller.autosave_timer.start()
