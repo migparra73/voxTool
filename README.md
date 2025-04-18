@@ -6,7 +6,9 @@
 - Clone the repository from GitHub
 - Create a Conda environment from the definition file
   ```
-  conda env create -f conda_env.yml
+  conda env create -f conda_env_linux_py3.yml
+  or
+  conda env create -f environment_windows.yml
   ```
   This creates an environment named `vt` in which to run voxTool.
 
