@@ -1,16 +1,12 @@
-name: vt
+name: vt_new
 channels:
 - conda-forge
-- anaconda
-- free
-- defaults
 dependencies:
 - apptools
 - configobj
 - envisage
 - freetype
 - libpng
-- mayavi
 - mkl
 - numpy
 - openssl
@@ -19,8 +15,11 @@ dependencies:
 - pygments
 - pyyaml
 - readline
-- python
-- pyqt
+- python=3.12.2
+- pyqt=5.15.9
+- pyqt5-sip=12.12.2
+- readline
+- mayavi=4.8.1
 - setuptools
 - sip
 - six
@@ -36,3 +35,8 @@ dependencies:
 - python-dateutil
 - pytz
 - scipy
+- traits=6.4.3
+- traitlets=5.14.3
+- traitsui=8.0.0
+- vtk =9.2.6
+- vtk-base=9.2.6
