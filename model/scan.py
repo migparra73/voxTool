@@ -213,8 +213,8 @@ class Lead(object):
                  dimensions=(1, 5), radius=4, spacing=10,micros=None):
         self.point_cloud = point_cloud
         self.label = lead_label
-        self.type_ = lead_type
         self.dimensions = dimensions
+        self.type_ = lead_type
         self.radius = radius
         self.spacing = spacing
         self.contacts = OrderedDict()
@@ -659,6 +659,8 @@ class CT(object):
             # If we are in LAS, we need to switch the x-coordinate
             for contact in sorted(lead.contacts.keys(), key=lambda x: int(x)):
                 voxel = np.rint(lead.contacts[contact].center)
+                # Don't round
+                #voxel = lead.contacts[contact].center
                 contact_name = lead.label + contact
                 if self.coordSystem == 'LAS':
                     voxel = np.array([self.shape[0] - voxel[0], voxel[1], voxel[2]])
@@ -674,8 +676,6 @@ class CT(object):
                         pair_name, voxel[0], voxel[1], voxel[2], ltype, dims[0], dims[1]))
         with open(fname, 'w') as vox_mom:
             vox_mom.writelines(csv_out)
-
-
 
     def calculate_pairs(self,lead):
         pairs = []
@@ -722,6 +722,92 @@ class CT(object):
                 else:
                     self._leads[lead_label].add_contact(point_mask, contact_label, loc, group)
 
+    # This method reads in a .txt file or .vox_mom file and creates leads, and contacts
+
+    def from_vox_mom_parser(self, fname):
+        log.debug("Loading from {}".format(fname))
+        with open(fname, 'r') as vox_mom:
+            lines = vox_mom.readlines()
+        log.debug("Read {} lines from {}".format(len(lines), fname))
+        if len(lines) == 0:
+            log.warning("No lines found in {}".format(fname))
+            return
+            
+        parsed_leads = {}
+        
+        for line in lines:
+            if not line.strip():
+                continue
+            parts = line.strip().split()
+            if len(parts) < 7:
+                log.warning("Skipping malformed line: {}".format(line))
+                continue
+                
+            log.debug("Processing line: {}".format(line.strip()))
+            contact_name, x, y, z, lead_type, dim_x, dim_y = parts[:7]
+            parsed_leads[contact_name] = {
+                'x': float(x),
+                'y': float(y),
+                'z': float(z),
+                'lead_type': lead_type,
+                'dim_x': int(dim_x),
+                'dim_y': int(dim_y)
+            }
+        log.debug("Parsed {} leads from {}".format(len(parsed_leads), fname))
+        return parsed_leads       
+
+
+    def from_vox_mom(self, fname):
+        parsed_leads = self.from_vox_mom_parser(fname)
+        if not parsed_leads:
+            log.warning("No valid leads found in {}".format(fname))
+            return False
+        else:
+            log.debug("Creating leads from parsed data")
+            leads = {}
+        
+        skipped_contacts = 0
+        loaded_contacts = 0
+        for contact_name, contact_data in parsed_leads.items():
+            x, y, z = contact_data['x'], contact_data['y'], contact_data['z']
+            lead_type = contact_data['lead_type']
+            dim_x, dim_y = contact_data['dim_x'], contact_data['dim_y']
+            log.debug("Processing contact {} at ({}, {}, {}) with type {} and dimensions ({}, {})".format(
+                contact_name, x, y, z, lead_type, dim_x, dim_y))
+
+            lead_label = contact_name[:-1 * len(re.findall(r'\d+', contact_name)[-1])]
+            
+            if lead_label not in leads:
+                leads[lead_label] = Lead(self._points, lead_label, lead_type,
+                                         dimensions=(int(dim_x), int(dim_y)), radius=3)
+            lead = leads[lead_label]
+            
+            # Use a larger radius when loading from file to ensure points are found
+            search_radius = lead.radius
+            point_mask = PointMask.centered_proximity_mask(self._points, np.array([x, y, z]), search_radius)
+            
+            if not point_mask.mask.any():
+                # If no points found with initial radius, try a larger one as fallback
+                log.warning("No points found near {} for contact {}. Trying fallback radius".format((x, y, z), contact_name))
+                fallback_radius = lead.radius * 3
+                point_mask = PointMask.centered_proximity_mask(self._points, np.array([x, y, z]), fallback_radius)
+                
+                if not point_mask.mask.any():
+                    log.warning("Could not find any points near {} for contact {}. Skipping".format((x, y, z), contact_name))
+                    skipped_contacts += 1
+                    continue
+                
+            lead.add_contact(point_mask, contact_name.replace(lead_label, ''), (int(dim_x), int(dim_y)), 0)
+            loaded_contacts += 1
+            
+        self.set_leads(list(leads.keys()), [l.type_ for l in leads.values()],
+                       [l.dimensions for l in leads.values()],
+                       [l.radius for l in leads.values()],
+                       [l.spacing for l in leads.values()])
+        self._leads.update(leads)
+        
+        log.info(f"Loaded {loaded_contacts} contacts, skipped {skipped_contacts} contacts")
+        return loaded_contacts > 0  # Return True if any contacts were loaded
 
     def from_json(self, filename):
         self.from_dict(json.load(open(filename)))

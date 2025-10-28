@@ -142,7 +142,7 @@ class PylocControl(object):
                         self.view.update_clouds()
                         self.view.contact_panel.update_contacts()
                         
-                        log.info("Successfully recovered from auto-save")
+                        log.info("Successfully recovered from auto-saved")
                         # Enable manual save thru UI
                         self.view.task_bar.save_button.setEnabled(True)
                     else:
@@ -304,6 +304,13 @@ class PylocControl(object):
         self.view.task_bar.switch_coordinate_system.clicked.connect(self.switch_coordinate_system)
         self.view.task_bar.load_mri_button.clicked.connect(self.prompt_for_mri)
         self.view.task_bar.mri_opacity.valueChanged.connect(self.update_mri_opacity)
+        self.view.task_bar.translate_coords_button.clicked.connect(self.open_translate_coords)
+
+    def open_translate_coords(self):
+        """Open the coordinate translation popup window"""
+        log.debug("Opening Translate Coordinates window")
+        self.translate_window = TranslateCoordinatesWidget(self)
+        self.translate_window.show()
 
     def switch_coordinate_system(self):
         self.ct.switch_coordinate_system()
@@ -339,18 +346,39 @@ class PylocControl(object):
         log.debug("Save coordinates done.")
 
     def load_coordinates(self):
-        log.debug("Loading coordinates")
-        (file, filter) = QtGui.QFileDialog().getOpenFileName(None, 'Select voxel_coordinates.json', '.', '(*.json)')
-        if file:
-            log.debug("Loading from file {}".format(file))
-            self.ct.from_json(file)
-            log.debug("Loaded from file {}".format(file))
-            log.debug("Updating view, and adding _leads cloud...")
-            self.view.update_cloud('_leads')
-            log.debug("_leads clouds updated, updating contact panel...")
-            self.view.contact_panel.update_contacts()
-            log.debug("Contact panel updated, load_coordinates done.")
+        """Load coordinates from txt/vox_mom file"""
+        file_path, _ = QtGui.QFileDialog().getOpenFileName(None, 'Load Coordinates', '.', '(*.txt *.vox_mom *.json)')
     
+        if not file_path:
+            return
+        
+        log.debug(f"Loading coordinates from {file_path}")
+    
+        try:
+            if file_path.endswith('.json'):
+                self.ct.from_json(file_path)
+                success = True
+            else:  # txt or vox_mom
+                success = self.ct.from_vox_mom(file_path)
+            
+            if success:
+                # Update UI elements
+                self.view.update_clouds()
+                self.view.contact_panel.update_contacts()
+                log.info(f"Successfully loaded coordinates from {file_path}")
+            
+                # Enable save button
+                self.view.task_bar.save_button.setEnabled(True)
+            else:
+                QtGui.QMessageBox.warning(None, 'Loading Error', 
+                    'No valid contacts were found in the coordinate file.\n'
+                    'Check that the coordinates match the current CT scan.')
+            
+        except Exception as e:
+            log.error(f"Failed to load coordinates: {str(e)}")
+            QtGui.QMessageBox.warning(None, 'Loading Error', 
+                f'Failed to load coordinates: {str(e)}')
+
     def load_gridmap_file(self):
         log.debug("Loading gridmap file")
         (file, filter) = QtGui.QFileDialog().getOpenFileName(None, 'Select gridmap file', '.', '(*)')
@@ -1103,8 +1131,13 @@ class TaskBarLayout(QtGui.QHBoxLayout):
         mri_layout.addWidget(QtGui.QLabel("MRI Opacity:"))
         mri_layout.addWidget(self.mri_opacity)
         
-        # Add to main layout
+        # Add Translate Coordinates button
+        self.translate_coords_button = QtGui.QPushButton("Translate Coordinates")
+        self.translate_coords_button.setEnabled(True)
+        
+        # Add to layout near the end
         self.addLayout(mri_layout)
+        self.addWidget(self.translate_coords_button)
 
     def toggle_autosave(self, state):
         if state == QtCore.Qt.Checked:
@@ -1456,3 +1489,253 @@ if __name__ == 'x__main__':
     window.setCentralWidget(x)
     window.show()
     app.exec_()
+
+class TranslateCoordinatesWidget(QtGui.QWidget):
+    def __init__(self, controller, parent=None):
+        super(TranslateCoordinatesWidget, self).__init__(parent)
+        self.controller = controller
+        self.setWindowTitle("Translate Coordinates")
+        
+        # CT scan paths
+        self.ref_ct_path = None
+        self.floating_ct_path = None
+        self.coords_file_path = None
+        self.registration_transform = None
+        
+        # Create UI elements
+        self.create_ui()
+        self.setup_callbacks()
+        
+        # Set initial states
+        self.update_ui_state()
+        
+    def create_ui(self):
+        layout = QtGui.QVBoxLayout(self)
+        
+        # Reference CT section
+        ref_group = QtGui.QGroupBox("Reference CT")
+        ref_layout = QtGui.QVBoxLayout(ref_group)
+        
+        self.ref_ct_button = QtGui.QPushButton("Load Reference CT")
+        self.ref_ct_label = QtGui.QLabel("No reference CT loaded")
+        
+        ref_layout.addWidget(self.ref_ct_button)
+        ref_layout.addWidget(self.ref_ct_label)
+        
+        # Floating CT section
+        float_group = QtGui.QGroupBox("Floating CT")
+        float_layout = QtGui.QVBoxLayout(float_group)
+        
+        self.floating_ct_button = QtGui.QPushButton("Load Floating CT")
+        self.floating_ct_label = QtGui.QLabel("No floating CT loaded")
+        
+        float_layout.addWidget(self.floating_ct_button)
+        float_layout.addWidget(self.floating_ct_label)
+        
+        # Registration section
+        reg_group = QtGui.QGroupBox("Registration")
+        reg_layout = QtGui.QVBoxLayout(reg_group)
+        
+        self.register_button = QtGui.QPushButton("Register CTs")
+        self.register_button.setEnabled(False)
+        self.register_status = QtGui.QLabel("Not registered")
+        
+        reg_layout.addWidget(self.register_button)
+        reg_layout.addWidget(self.register_status)
+        
+        # Coordinates section
+        coords_group = QtGui.QGroupBox("Coordinates")
+        coords_layout = QtGui.QVBoxLayout(coords_group)
+        
+        self.load_coords_button = QtGui.QPushButton("Load Coordinates")
+        self.load_coords_button.setEnabled(False)
+        self.coords_label = QtGui.QLabel("No coordinates loaded")
+        
+        self.transform_coords_button = QtGui.QPushButton("Transform Coordinates")
+        self.transform_coords_button.setEnabled(False)
+        
+        coords_layout.addWidget(self.load_coords_button)
+        coords_layout.addWidget(self.coords_label)
+        coords_layout.addWidget(self.transform_coords_button)
+        
+        # Progress indicator
+        self.progress_bar = QtGui.QProgressBar()
+        self.progress_bar.setVisible(False)
+        
+        # Add sections to main layout
+        layout.addWidget(ref_group)
+        layout.addWidget(float_group)
+        layout.addWidget(reg_group)
+        layout.addWidget(coords_group)
+        layout.addWidget(self.progress_bar)
+        
+        # Size the window appropriately
+        self.setMinimumWidth(400)
+        self.setMinimumHeight(500)
+        
+    def setup_callbacks(self):
+        self.ref_ct_button.clicked.connect(self.load_reference_ct)
+        self.floating_ct_button.clicked.connect(self.load_floating_ct)
+        self.register_button.clicked.connect(self.register_ct_scans)
+        self.load_coords_button.clicked.connect(self.load_coordinates)
+        self.transform_coords_button.clicked.connect(self.transform_coordinates)
+        
+    def update_ui_state(self):
+        # Enable register button if both CTs are loaded
+        has_ref = self.ref_ct_path is not None
+        has_float = self.floating_ct_path is not None
+        is_registered = self.registration_transform is not None
+        has_coords = self.coords_file_path is not None
+        
+        self.register_button.setEnabled(has_ref and has_float)
+        self.load_coords_button.setEnabled(has_float)
+        self.transform_coords_button.setEnabled(is_registered and has_coords)
+        
+    def load_reference_ct(self):
+        file_path, _ = QtGui.QFileDialog().getOpenFileName(self, 'Select Reference CT Scan', '.', '(*)')
+        if file_path:
+            log.debug(f"Loading reference CT from {file_path}")
+            self.ref_ct_path = file_path
+            self.ref_ct_label.setText(f"Loaded: {os.path.basename(file_path)}")
+            
+            # Create a CT object from the file
+            self.ref_ct = CT(self.controller.config)
+            self.ref_ct.load(file_path, self.controller.config['ct_threshold'])
+            
+            self.update_ui_state()
+            
+    def load_floating_ct(self):
+        file_path, _ = QtGui.QFileDialog().getOpenFileName(self, 'Select Floating CT Scan', '.', '(*)')
+        if file_path:
+            log.debug(f"Loading floating CT from {file_path}")
+            self.floating_ct_path = file_path
+            self.floating_ct_label.setText(f"Loaded: {os.path.basename(file_path)}")
+            
+            # Create a CT object from the file
+            self.floating_ct = CT(self.controller.config)
+            self.floating_ct.load(file_path, self.controller.config['ct_threshold'])
+            
+            self.update_ui_state()
+            
+    def load_coordinates(self):
+        file_path, _ = QtGui.QFileDialog().getOpenFileName(self, 'Select Coordinates File', '.', '(*.json *.txt)')
+        ct = CT(self.controller.config)
+        self.coordinates_data = {}
+        if file_path:
+            log.debug(f"Loading coordinates from {file_path}")
+            self.coords_file_path = file_path
+            self.coords_label.setText(f"Loaded: {os.path.basename(file_path)}")
+            
+            # Load the coordinates
+            if file_path.endswith('.json'):
+                with open(file_path, 'r') as f:
+                    self.coordinates_data = json.load(f)
+            else:  # txt file
+                parsed_leads = ct.from_vox_mom_parser(file_path)
+                self.coordinates_data = parsed_leads
+            self.update_ui_state()
+            
+    def register_ct_scans(self):
+        """Register the floating CT to the reference CT using SimpleITK"""
+        if not self.ref_ct or not self.floating_ct:
+            QtGui.QMessageBox.warning(self, 'Registration Error', 
+                              'Both reference and floating CT scans must be loaded')
+            return
+            
+        log.debug("Registering CT scans")
+        
+        # Show progress
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(10)
+        
+        try:
+            # Fallback method: direct affine transformation
+            # Extract transformation matrices from CT headers
+            ref_affine = self.ref_ct.affine
+            floating_affine = self.floating_ct.affine
+            # Make sure that the affine matrices are square
+            if ref_affine.shape[0] == 3 and ref_affine.shape[1] == 4:
+                ref_affine = np.vstack([ref_affine, [0, 0, 0, 1]])
+            if floating_affine.shape[0] == 3 and floating_affine.shape[1] == 4:
+                floating_affine = np.vstack([floating_affine, [0, 0, 0, 1]])
+            log.debug(f"Reference CT affine: {ref_affine}")
+            log.debug(f"Floating CT affine: {floating_affine}")
+            # Calculate the transformation from floating to reference
+            self.registration_transform = np.linalg.inv(ref_affine) @ floating_affine
+            self.progress_bar.setValue(90)
+            # Update UI
+            self.register_status.setText("Registered with fallback method ✓")
+            self.update_ui_state()
+            self.progress_bar.setValue(100)
+            QtGui.QMessageBox.information(self, 'Registration Complete', 
+                                        'Successfully registered CT scans using fallback method')
+        except Exception as nested_e:
+            log.error(f"Fallback registration failed: {str(nested_e)}")
+            QtGui.QMessageBox.warning(self, 'Registration Error', 
+                                f'Failed to register CT scans: {str(e)}\nFallback also failed: {str(nested_e)}')
+        finally:
+            self.progress_bar.setVisible(False)
+    
+    def transform_coordinates(self):
+        """Transform coordinates from floating space to reference space"""
+        if self.registration_transform is None:
+            log.warning("Transformation attempted without registration")
+            QtGui.QMessageBox.warning(self, 'Transformation Error', 
+                                     'CT scans must be registered first')
+            return
+            
+        try:
+            # Apply transformation to coordinates
+            transformed_data = self.apply_transform_to_coordinates(self.coordinates_data)
+            
+            # Prompt for save location
+            save_file, _ = QtGui.QFileDialog().getSaveFileName(self, 
+                                                           'Save Transformed Coordinates', 
+                                                           '.', 
+                                                           'JSON (*.json);;TXT (*.txt)')
+            if save_file:
+                # Save transformed coordinates
+                if save_file.endswith('.json'):
+                    with open(save_file, 'w') as f:
+                        json.dump(transformed_data, f, indent=2)
+                else:  # txt file
+                    # Implement txt saving based on your format
+                    with open(save_file, 'w') as f:
+                        for lead_name, lead_data in transformed_data.items():
+                            f.write(f"{lead_name} \t{lead_data['x']} \t{lead_data['y']} \t{lead_data['z']} \t{lead_data['lead_type']} \t{lead_data['dim_x']} \t{lead_data['dim_y']}\n")                        
+                
+                QtGui.QMessageBox.information(self, 'Transformation Complete', 
+                                            f'Transformed coordinates saved to {save_file}')
+                
+        except Exception as e:
+            log.error(f"Coordinate transformation failed: {str(e)}")
+            QtGui.QMessageBox.warning(self, 'Transformation Error', 
+                                    f'Failed to transform coordinates: {str(e)}')
+    
+    def apply_transform_to_coordinates(self, coordinates_data):
+        """Apply registration transform to coordinates"""
+        '''     
+        coordinates_data looks like this:        
+        parsed_leads[contact_name] = {
+                'x': float(x),
+                'y': float(y),
+                'z': float(z),
+                'lead_type': lead_type,
+                'dim_x': int(dim_x),
+                'dim_y': int(dim_y)
+            }
+        '''
+        transformed_data = coordinates_data.copy()
+
+        # Apply the transformation to each coordinate
+        for lead_name, lead_data in coordinates_data.items():
+            # Extract the original coordinates
+            original_coords = np.array([lead_data['x'], lead_data['y'], lead_data['z'], 1.0])
+            # Apply the transformation
+            transformed_coords = self.registration_transform @ original_coords
+            # Update the coordinates in the transformed data
+            transformed_data[lead_name]['x'] = transformed_coords[0]
+            transformed_data[lead_name]['y'] = transformed_coords[1]
+            transformed_data[lead_name]['z'] = transformed_coords[2]
+        
+        return transformed_data
