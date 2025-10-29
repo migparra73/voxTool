@@ -1,17 +1,55 @@
+print("pyloc: Starting imports...")
+
 import os
 import json
+
+print("pyloc: importing traits.etsconfig...")
 from traits.etsconfig.api import ETSConfig
 ETSConfig.toolkit = 'qt'
+print("pyloc: ETSConfig OK")
 
-from pyface.qt import QtGui, QtCore
+print("pyloc: importing PySide6.QtWidgets...")
+# Import PySide6 Qt classes directly instead of using pyface.qt
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                               QHBoxLayout, QLabel, QPushButton, QComboBox, 
+                               QSlider, QMessageBox, QFileDialog,
+                               QSizePolicy, QSplitter, QProgressBar, QCheckBox,
+                               QSpinBox, QDoubleSpinBox, QLineEdit, QGroupBox,
+                               QTabWidget, QScrollArea, QFrame, QTextEdit,
+                               QListWidget, QAbstractItemView, QListWidgetItem)
+print("pyloc: PySide6.QtWidgets OK")
+
+print("pyloc: importing PySide6.QtCore...")
+from PySide6.QtCore import Qt, QTimer, Signal, QItemSelectionModel
+print("pyloc: PySide6.QtCore OK")
+
+print("pyloc: importing PySide6.QtGui...")
+from PySide6.QtGui import QKeySequence, QIcon, QPixmap, QShortcut
+print("pyloc: PySide6.QtGui OK")
+
+print("pyloc: importing model.scan...")
 from model.scan import CT
+print("pyloc: model.scan OK")
+
+print("pyloc: importing view.slice_viewer...")
 from view.slice_viewer import SliceViewWidget
+print("pyloc: view.slice_viewer OK")
+
+print("pyloc: importing mayavi...")
 from mayavi.core.ui.api import MayaviScene, MlabSceneModel, \
     SceneEditor
 from mayavi import mlab
-from traits.api import HasTraits, Instance, on_trait_change
-from traitsui.api import View, Item
+print("pyloc: mayavi OK")
 
+print("pyloc: importing traits.api...")
+from traits.api import HasTraits, Instance, on_trait_change
+print("pyloc: traits.api OK")
+
+print("pyloc: importing traitsui.api...")
+from traitsui.api import View, Item
+print("pyloc: traitsui.api OK")
+
+print("pyloc: importing other modules...")
 import random
 import numpy as np
 import logging
@@ -20,21 +58,38 @@ import re
 from datetime import datetime
 
 from collections import OrderedDict
+print("pyloc: other modules OK")
 
+print("pyloc: setting up logging...")
 log = logging.getLogger()
-log.setLevel(1)
+log.setLevel(logging.DEBUG)
 
+# Create console handler and set level to debug
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
 
+# Create formatter
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Add formatter to ch
+ch.setFormatter(formatter)
+
+# Add ch to logger
+log.addHandler(ch)
+print("pyloc: logging setup OK")
+
+print("pyloc: defining utility functions...")
 def add_labeled_widget(layout, label, *widgets):
-    sub_layout = QtGui.QHBoxLayout()
-    label_widget = QtGui.QLabel(label)
+    sub_layout = QHBoxLayout()
+    label_widget = QLabel(label)
     sub_layout.addWidget(label_widget)
     for widget in widgets:
         sub_layout.addWidget(widget)
     layout.addLayout(sub_layout)
 
+print("pyloc: utility functions OK")
 
-
+print("pyloc: defining PylocControl class...")
 class PylocControl(object):
     """
     Main class for running VoxTool.
@@ -44,17 +99,25 @@ class PylocControl(object):
     def __init__(self, config=None):
         log.debug("Initializing PylocControl")
         if config == None:
-            config = yaml.load(open("../model/config.yml"))
+            config = yaml.load(open("../model/config.yml"), Loader=yaml.SafeLoader)
 
         log.debug("Config: {}".format(config))
         log.debug("Starting application")
-        self.app = QtGui.QApplication.instance() #: The underlying application. Runs automatically
+        
+        # Create QApplication if it doesn't exist
+        self.app = QApplication.instance()
+        if self.app is None:
+            self.app = QApplication([])
+            log.debug("Created new QApplication")
+        else:
+            log.debug("Using existing QApplication")
+            
         self.view = PylocWidget(self, config) #: The base object for the GUI
         log.debug("View created")
         self.view.show()
 
         log.debug("View shown")
-        self.window = QtGui.QMainWindow()
+        self.window = QMainWindow()
         self.window.setCentralWidget(self.view)
         self.window.show()
         log.debug("Window shown")
@@ -78,7 +141,7 @@ class PylocControl(object):
 
         self.seeding = False #: Toggled by self.toggle_seeding
 
-        self.autosave_timer = QtCore.QTimer()
+        self.autosave_timer = QTimer()
         self.autosave_timer.timeout.connect(self.auto_save_state)
         self.autosave_timer.start(10000)  # Autosave every 5 minutes
         
@@ -121,15 +184,15 @@ class PylocControl(object):
                     timestamp = state.get('timestamp', 'unknown time')
                 
                 # Ask user if they want to recover
-                reply = QtGui.QMessageBox.question(
+                reply = QMessageBox.question(
                     None,
                     'Recover Session',
                     f'Found auto-saved session from {timestamp}.\nWould you like to restore it?',
-                    QtGui.QMessageBox.Yes | QtGui.QMessageBox.No,
-                    QtGui.QMessageBox.Yes
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes
                 )
                 
-                if reply == QtGui.QMessageBox.Yes:
+                if reply == QMessageBox.StandardButton.Yes:
                     # Load CT scan if it exists
                     if os.path.exists(state['ct_file']):
                         self.load_ct(state['ct_file'])
@@ -146,7 +209,7 @@ class PylocControl(object):
                         # Enable manual save thru UI
                         self.view.task_bar.save_button.setEnabled(True)
                     else:
-                        QtGui.QMessageBox.warning(
+                        QMessageBox.warning(
                             None,
                             'Recovery Error',
                             'CT file not found, could not recover session'
@@ -157,7 +220,7 @@ class PylocControl(object):
                     
         except Exception as e:
             log.error(f"Recovery failed: {str(e)}")
-            QtGui.QMessageBox.warning(
+            QMessageBox.warning(
                 None,
                 'Recovery Error',
                 f'Failed to recover auto-saved session: {str(e)}'
@@ -253,7 +316,7 @@ class PylocControl(object):
         :return:
         """
         log.debug("Prompting for CT")
-        (file_, filter_) = QtGui.QFileDialog().getOpenFileName(None, 'Select Scan', '.', '(*)')
+        (file_, filter_) = QFileDialog().getOpenFileName(None, 'Select Scan', '.', '(*)')
         if file_:
             log.debug("Loading CT from file {}".format(file_))
             self.load_ct(filename=file_)
@@ -292,7 +355,7 @@ class PylocControl(object):
 
     def exec_(self):
         log.debug("Running application")
-        self.app.exec_()
+        self.app.exec()
 
     def assign_callbacks(self):
         log.debug("Assigning callbacks")
@@ -325,11 +388,11 @@ class PylocControl(object):
         :return:
         """
         log.debug("Assigning shortcuts")
-        QtGui.QShortcut(QtGui.QKeySequence('S'),self.view).activated.connect(self.add_selection)
-        QtGui.QShortcut(QtGui.QKeySequence('Ctrl+O'),self.view).activated.connect(self.prompt_for_ct)
-        QtGui.QShortcut(QtGui.QKeySequence('Ctrl+Shift+O'),self.view).activated.connect(self.load_coordinates)
-        QtGui.QShortcut(QtGui.QKeySequence('Ctrl+D'),self.view).activated.connect(self.define_leads)
-        QtGui.QShortcut(QtGui.QKeySequence('Ctrl+S'),self.view).activated.connect(self.save_coordinates)
+        QShortcut(QKeySequence('S'),self.view).activated.connect(self.add_selection)
+        QShortcut(QKeySequence('Ctrl+O'),self.view).activated.connect(self.prompt_for_ct)
+        QShortcut(QKeySequence('Ctrl+Shift+O'),self.view).activated.connect(self.load_coordinates)
+        QShortcut(QKeySequence('Ctrl+D'),self.view).activated.connect(self.define_leads)
+        QShortcut(QKeySequence('Ctrl+S'),self.view).activated.connect(self.save_coordinates)
 
     def save_coordinates(self):
         """
@@ -337,7 +400,7 @@ class PylocControl(object):
         :return:
         """
         log.debug("Saving coordinates")
-        file,file_filter = QtGui.QFileDialog().getSaveFileName(None,'Save as:',os.path.join(os.getcwd(),'voxel_coordinates.txt'),
+        file,file_filter = QFileDialog().getSaveFileName(None,'Save as:',os.path.join(os.getcwd(),'voxel_coordinates.txt'),
                                                             'JSON (*.json);;TXT (*.txt)','JSON (*.json)')
         if file:
             log.debug("Saving to file {}".format(file))
@@ -347,7 +410,7 @@ class PylocControl(object):
 
     def load_coordinates(self):
         """Load coordinates from txt/vox_mom file"""
-        file_path, _ = QtGui.QFileDialog().getOpenFileName(None, 'Load Coordinates', '.', '(*.txt *.vox_mom *.json)')
+        file_path, _ = QFileDialog().getOpenFileName(None, 'Load Coordinates', '.', '(*.txt *.vox_mom *.json)')
     
         if not file_path:
             return
@@ -370,18 +433,18 @@ class PylocControl(object):
                 # Enable save button
                 self.view.task_bar.save_button.setEnabled(True)
             else:
-                QtGui.QMessageBox.warning(None, 'Loading Error', 
+                QMessageBox.warning(None, 'Loading Error', 
                     'No valid contacts were found in the coordinate file.\n'
                     'Check that the coordinates match the current CT scan.')
             
         except Exception as e:
             log.error(f"Failed to load coordinates: {str(e)}")
-            QtGui.QMessageBox.warning(None, 'Loading Error', 
+            QMessageBox.warning(None, 'Loading Error', 
                 f'Failed to load coordinates: {str(e)}')
 
     def load_gridmap_file(self):
         log.debug("Loading gridmap file")
-        (file, filter) = QtGui.QFileDialog().getOpenFileName(None, 'Select gridmap file', '.', '(*)')
+        (file, filter) = QFileDialog().getOpenFileName(None, 'Select gridmap file', '.', '(*)')
         if file:
             log.debug("Loading from file {}".format(file))
             self.ct.load_gridmap(file)
@@ -398,7 +461,7 @@ class PylocControl(object):
         :return:
         """
         log.debug("Defining leads")
-        self.lead_window = QtGui.QMainWindow()
+        self.lead_window = QMainWindow()
         log.debug("Creating LeadDefinitionWidget")
         lead_widget = LeadDefinitionWidget(self, self.config, self.view)
         log.debug("Setting leads")
@@ -436,7 +499,7 @@ class PylocControl(object):
                 break
         else:
             log.debug("No contact found")
-            panel.contact_list.setCurrentRow(panel.contact_list.currentRow(),QtGui.QItemSelectionModel.Deselect)
+            panel.contact_list.setCurrentRow(panel.contact_list.currentRow(),QItemSelectionModel.SelectionFlag.Deselect)
 
         if not np.isnan(self.selected_coordinate).all():
             if self.seeding and allow_seed:
@@ -467,9 +530,9 @@ class PylocControl(object):
             self.ct.select_points_near(self.selected_coordinate, radius)
 
     def confirm(self, label):
-        reply = QtGui.QMessageBox.question(None, 'Confirmation', label,
-                                           QtGui.QMessageBox.Yes, QtGui.QMessageBox.No)
-        return reply == QtGui.QMessageBox.Yes
+        reply = QMessageBox.question(None, 'Confirmation', label,
+                                           QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No)
+        return reply == QMessageBox.StandardButton.Yes
 
     def add_selection(self):
         """
@@ -534,14 +597,14 @@ class PylocControl(object):
     def prompt_for_mri(self):
         """Handler for Load MRI button"""
         log.debug("Prompting for MRI")
-        mri_dir = QtGui.QFileDialog().getExistingDirectory(None, 'Select Freesurfer MRI Directory')
+        mri_dir = QFileDialog().getExistingDirectory(None, 'Select Freesurfer MRI Directory')
         
         if mri_dir:
             aparc_file = os.path.join(mri_dir, 'mri/aparc+aseg.mgz')
             if os.path.exists(aparc_file):
                 self.load_mri(aparc_file)
             else:
-                QtGui.QMessageBox.warning(None, 'Error', 
+                QMessageBox.warning(None, 'Error', 
                     'Could not find aparc+aseg.mgz in selected directory')
                 
     def load_mri(self, filename):
@@ -565,7 +628,7 @@ class PylocControl(object):
             
         except Exception as e:
             log.error(f"Failed to load MRI: {str(e)}")
-            QtGui.QMessageBox.warning(None, 'Error', f'Failed to load MRI: {str(e)}')
+            QMessageBox.warning(None, 'Error', f'Failed to load MRI: {str(e)}')
             
     def register_to_ct(self, mri_img):
         """
@@ -586,7 +649,7 @@ class PylocControl(object):
             self.view.cloud_widget.viewer.clouds['_mri'].set_opacity(opacity)
 
 
-class PylocWidget(QtGui.QWidget):
+class PylocWidget(QWidget):
     def __init__(self, controller, config, parent=None):
         """
         The widget controlled by PylocController
@@ -594,7 +657,7 @@ class PylocWidget(QtGui.QWidget):
         :param config:
         :param parent:
         """
-        QtGui.QWidget.__init__(self, parent)
+        QWidget.__init__(self, parent)
         self.controller = controller
         self.cloud_widget = CloudWidget(self, config)
         self.task_bar = TaskBarLayout()
@@ -603,8 +666,8 @@ class PylocWidget(QtGui.QWidget):
         self.contact_panel.setEnabled(False)
         self.threshold_panel = ThresholdWidget(controller=controller, config=config, parent=self)
 
-        layout = QtGui.QVBoxLayout(self)
-        splitter = QtGui.QSplitter()
+        layout = QVBoxLayout(self)
+        splitter = QSplitter()
         splitter.addWidget(self.contact_panel)
         splitter.addWidget(self.cloud_widget)
         splitter.addWidget(self.slice_view)
@@ -628,7 +691,7 @@ class PylocWidget(QtGui.QWidget):
 
     def update_slices(self, coordinates):
         self.slice_view.set_coordinate(coordinates)
-        self.slice_view.update()
+        self.slice_view.update_slices()
 
     def plot_cloud(self,label):
         self.cloud_widget.plot_cloud(label)
@@ -667,14 +730,14 @@ class PylocWidget(QtGui.QWidget):
             self.controller.auto_save_state()
         super().closeEvent(event)
 
-class NoScrollComboBox(QtGui.QComboBox):
+class NoScrollComboBox(QComboBox):
     """
     Subclass of QComboBox that doesn't interact with the scroll wheel.
     """
     def __init__(self,*args,**kwargs):
         super(NoScrollComboBox, self).__init__(*args,**kwargs)
         # Don't want to receive focus via scroll wheel
-        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def wheelEvent(self, QWheelEvent):
         """
@@ -685,7 +748,7 @@ class NoScrollComboBox(QtGui.QComboBox):
         QWheelEvent.accept()
         return
 
-class ContactPanelWidget(QtGui.QWidget):
+class ContactPanelWidget(QWidget):
     def __init__(self, controller, config, parent=None):
         """
         Panel that displays and interacts with localized contacts
@@ -697,9 +760,9 @@ class ContactPanelWidget(QtGui.QWidget):
         self.config = config
         self.controller = controller
 
-        layout = QtGui.QVBoxLayout(self)
+        layout = QVBoxLayout(self)
 
-        lead_layout = QtGui.QHBoxLayout()
+        lead_layout = QHBoxLayout()
         layout.addLayout(lead_layout)
 
         self.labels = OrderedDict()
@@ -708,63 +771,63 @@ class ContactPanelWidget(QtGui.QWidget):
         self.label_dropdown.setMaximumWidth(200)
         add_labeled_widget(lead_layout,
                                 "Label :", self.label_dropdown)
-        self.contact_name = QtGui.QLineEdit()
+        self.contact_name = QLineEdit()
         lead_layout.addWidget(self.contact_name)
 
-        loc_layout = QtGui.QHBoxLayout()
+        loc_layout = QHBoxLayout()
         layout.addLayout(loc_layout)
 
-        self.x_lead_loc = QtGui.QLineEdit()
-        self.x_loc_max = QtGui.QLabel('')
+        self.x_lead_loc = QLineEdit()
+        self.x_loc_max = QLabel('')
         add_labeled_widget(loc_layout,
                                 "Lead   x:", self.x_lead_loc,self.x_loc_max)
 
-        self.y_lead_loc = QtGui.QLineEdit()
-        self.y_loc_max  = QtGui.QLabel('')
+        self.y_lead_loc = QLineEdit()
+        self.y_loc_max  = QLabel('')
         add_labeled_widget(loc_layout,
                                 " y:", self.y_lead_loc,self.y_loc_max)
 
-        self.lead_group = QtGui.QLineEdit("0")
+        self.lead_group = QLineEdit("0")
         add_labeled_widget(loc_layout,
                                 " group:", self.lead_group)
 
-        vox_layout = QtGui.QHBoxLayout()
+        vox_layout = QHBoxLayout()
         layout.addLayout(vox_layout)
 
-        self.r_voxel = QtGui.QLineEdit()
+        self.r_voxel = QLineEdit()
         add_labeled_widget(vox_layout,
                                 "R:", self.r_voxel)
-        self.a_voxel = QtGui.QLineEdit()
+        self.a_voxel = QLineEdit()
         add_labeled_widget(vox_layout,
                                 "A:", self.a_voxel)
-        self.s_voxel = QtGui.QLineEdit()
+        self.s_voxel = QLineEdit()
         add_labeled_widget(vox_layout,
                                 "S:", self.s_voxel)
 
-        self.axes_checkbox = QtGui.QCheckBox("Show RAS Tags")
+        self.axes_checkbox = QCheckBox("Show RAS Tags")
         self.axes_checkbox.setChecked(True)
         vox_layout.addWidget(self.axes_checkbox)
 
-        self.submit_button = QtGui.QPushButton("Submit")
+        self.submit_button = QPushButton("Submit")
 
         layout.addWidget(self.submit_button)
 
-        contact_label = QtGui.QLabel("Contacts:")
+        contact_label = QLabel("Contacts:")
         layout.addWidget(contact_label)
 
         self.contacts = []
-        self.contact_list = QtGui.QListWidget()
-        self.contact_list.setSelectionMode(QtGui.QAbstractItemView.ContiguousSelection)
+        self.contact_list = QListWidget()
+        self.contact_list.setSelectionMode(QAbstractItemView.SelectionMode.ContiguousSelection)
         layout.addWidget(self.contact_list)
 
-        self.interpolate_button = QtGui.QPushButton("Interpolate")
+        self.interpolate_button = QPushButton("Interpolate")
         layout.addWidget(self.interpolate_button)
 
-        self.seed_button = QtGui.QPushButton("Seeding")
+        self.seed_button = QPushButton("Seeding")
         self.seed_button.setCheckable(True)
         layout.addWidget(self.seed_button)
 
-        self.micro_button = QtGui.QPushButton("Add Micro-Contacts")
+        self.micro_button = QPushButton("Add Micro-Contacts")
         layout.addWidget(self.micro_button)
 
         self.assign_callbacks()
@@ -791,7 +854,7 @@ class ContactPanelWidget(QtGui.QWidget):
 
     def keyPressEvent(self, event):
         super(ContactPanelWidget, self).keyPressEvent(event)
-        if event.key() == QtCore.Qt.Key_Delete:
+        if event.key() == Qt.Key.Key_Delete:
             indices = self.contact_list.selectedIndexes()
             items  = [self.contacts[i.row()] for i in indices ]
             for (lead,contact) in items:
@@ -859,7 +922,7 @@ class ContactPanelWidget(QtGui.QWidget):
 
     def add_contact(self, lead, contact):
         self.contact_list.addItem(
-            QtGui.QListWidgetItem(self.config['lead_display'].format(lead=lead, contact=contact).strip())
+            QListWidgetItem(self.config['lead_display'].format(lead=lead, contact=contact).strip())
         )
         self.contacts.append((lead, contact))
 
@@ -883,7 +946,7 @@ class ContactPanelWidget(QtGui.QWidget):
             self.label_dropdown.addItem(lead_name)
 
 
-class LeadDefinitionWidget(QtGui.QWidget):
+class LeadDefinitionWidget(QWidget):
     instance = None
 
     def __init__(self, controller, config, parent=None):
@@ -892,25 +955,25 @@ class LeadDefinitionWidget(QtGui.QWidget):
         self.controller = controller
 
         # Subwidgets
-        self.label_edit = QtGui.QLineEdit()
-        self.x_size_edit = QtGui.QLineEdit()
-        self.y_size_edit = QtGui.QLineEdit()
-        self.type_box = QtGui.QComboBox()
+        self.label_edit = QLineEdit()
+        self.x_size_edit = QLineEdit()
+        self.y_size_edit = QLineEdit()
+        self.type_box = QComboBox()
 
         for label, electrode_type in config['lead_types'].items():
             if 'u' not in label:
                 self.type_box.addItem("{}: {name}".format(label, **electrode_type))
 
-        self.micro_box = QtGui.QComboBox()
+        self.micro_box = QComboBox()
         for micro_lead_type in sorted(config['micros'].keys()):
             self.micro_box.addItem(micro_lead_type)
 
-        self.submit_button = QtGui.QPushButton("Submit")
+        self.submit_button = QPushButton("Submit")
 
-        self.delete_button = QtGui.QPushButton("Delete")
-        self.close_button = QtGui.QPushButton("Confirm")
+        self.delete_button = QPushButton("Delete")
+        self.close_button = QPushButton("Confirm")
 
-        self.leads_list = QtGui.QListWidget()
+        self.leads_list = QListWidget()
 
         self.add_callbacks()
         self.set_layout()
@@ -919,12 +982,12 @@ class LeadDefinitionWidget(QtGui.QWidget):
         self._leads = OrderedDict()
 
     def set_layout(self):
-        layout = QtGui.QVBoxLayout(self)
+        layout = QVBoxLayout(self)
         add_labeled_widget(layout,
                                 "Lead Name: ", self.label_edit)
 
-        size_layout = QtGui.QHBoxLayout()
-        size_layout.addWidget(QtGui.QLabel("Dimensions: "))
+        size_layout = QHBoxLayout()
+        size_layout.addWidget(QLabel("Dimensions: "))
         add_labeled_widget(size_layout, "x:", self.x_size_edit)
         add_labeled_widget(size_layout, "y:", self.y_size_edit)
 
@@ -936,7 +999,7 @@ class LeadDefinitionWidget(QtGui.QWidget):
         layout.addWidget(self.submit_button)
         layout.addWidget(self.leads_list)
 
-        bottom_layout = QtGui.QHBoxLayout()
+        bottom_layout = QHBoxLayout()
 
         bottom_layout.addWidget(self.delete_button)
         bottom_layout.addWidget(self.close_button)
@@ -955,24 +1018,24 @@ class LeadDefinitionWidget(QtGui.QWidget):
         self.setTabOrder(self.delete_button,self.close_button)
 
     def set_shortcuts(self):
-        submit_shortcut = QtGui.QShortcut(QtGui.QKeySequence('S'),self)
+        submit_shortcut = QShortcut(QKeySequence('S'),self)
         submit_shortcut.activated.connect(self.add_current_lead)
 
-        confirm_shortcut = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Return),self)
+        confirm_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Return),self)
         confirm_shortcut.activated.connect(self.finish)
-        confirm_shortcut = QtGui.QShortcut(QtGui.QKeySequence( QtCore.Qt.Key_Enter),self)
+        confirm_shortcut = QShortcut(QKeySequence( Qt.Key.Key_Enter),self)
         confirm_shortcut.activated.connect(self.finish)
 
-        delete_shortcut = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Delete),self)
+        delete_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Delete),self)
         delete_shortcut.activated.connect(self.delete_lead)
 
-        focus_shortcut = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Escape),self)
+        focus_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape),self)
         focus_shortcut.activated.connect(self.setFocus)
 
 
     @classmethod
     def launch(cls, controller, config, parent=None):
-        window = QtGui.QMainWindow()
+        window = QMainWindow()
         widget = cls(controller, config, parent)
         window.setCentralWidget(widget)
         window.show()
@@ -1005,7 +1068,7 @@ class LeadDefinitionWidget(QtGui.QWidget):
         self.leads_list.clear()
         for lead in self._leads.values():
             self.leads_list.addItem(
-                QtGui.QListWidgetItem(
+                QListWidgetItem(
                     "{label} ({x} x {y}, {type})".format(**lead)
                 )
             )
@@ -1039,13 +1102,13 @@ class LeadDefinitionWidget(QtGui.QWidget):
 
     @staticmethod
     def add_labeled_widget(layout, label, widget):
-        sub_layout = QtGui.QHBoxLayout()
-        label_widget = QtGui.QLabel(label)
+        sub_layout = QHBoxLayout()
+        label_widget = QLabel(label)
         sub_layout.addWidget(label_widget)
         sub_layout.addWidget(widget)
         layout.addLayout(sub_layout)
 
-class ThresholdWidget(QtGui.QWidget):
+class ThresholdWidget(QWidget):
     """
     Subwindow for changing the threshold
     """
@@ -1055,19 +1118,19 @@ class ThresholdWidget(QtGui.QWidget):
         self.controller = controller
         self.config = config
         
-        self.set_threshold_button = QtGui.QPushButton("Update")
+        self.set_threshold_button = QPushButton("Update")
         self.set_threshold_button.clicked.connect(self.update_pressed)
-        self.threshold_selector = QtGui.QDoubleSpinBox()
+        self.threshold_selector = QDoubleSpinBox()
         self.threshold_selector.setSingleStep(0.5)
         self.threshold_selector.setValue(self.config['ct_threshold'])
         self.threshold_selector.valueChanged.connect(self.update_threshold_value)
         self.threshold_selector.setKeyboardTracking(True)
 
-        layout = QtGui.QVBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(1,1,1,1)
         add_labeled_widget(layout,'CT Threshold',self.threshold_selector,self.set_threshold_button)
 
-        self.setSizePolicy(QtGui.QSizePolicy.Preferred,QtGui.QSizePolicy.Maximum)
+        self.setSizePolicy(QSizePolicy.Preferred,QSizePolicy.Maximum)
 
     def update_pressed(self):
         if self.controller.ct:
@@ -1080,25 +1143,25 @@ class ThresholdWidget(QtGui.QWidget):
 
 
 
-class TaskBarLayout(QtGui.QHBoxLayout):
+class TaskBarLayout(QHBoxLayout):
     def __init__(self, parent=None):
         super(TaskBarLayout, self).__init__(parent)
-        self.load_scan_button = QtGui.QPushButton("Load Scan")
-        self.define_leads_button = QtGui.QPushButton("Define Leads")
+        self.load_scan_button = QPushButton("Load Scan")
+        self.define_leads_button = QPushButton("Define Leads")
         self.define_leads_button.setEnabled(False)
-        self.load_coord_button = QtGui.QPushButton("Load Coordinates")
+        self.load_coord_button = QPushButton("Load Coordinates")
         self.load_coord_button.setEnabled(False)
-        self.clean_button = QtGui.QPushButton("Clean scan")
-        self.save_button=QtGui.QPushButton("Save as...")
+        self.clean_button = QPushButton("Clean scan")
+        self.save_button=QPushButton("Save as...")
         self.save_button.setEnabled(False)
-        self.bipolar_box = QtGui.QCheckBox("Include Bipolar Pairs")
+        self.bipolar_box = QCheckBox("Include Bipolar Pairs")
         # Sets up the button to load a gridmap file.
-        self.load_gridmap_file = QtGui.QPushButton("Load Gridmap File")
+        self.load_gridmap_file = QPushButton("Load Gridmap File")
         self.load_gridmap_file.setEnabled(False)
-        self.switch_coordinate_system = QtGui.QPushButton("Switch Coordinate System")
+        self.switch_coordinate_system = QPushButton("Switch Coordinate System")
         self.switch_coordinate_system.setEnabled(False)
 
-        save_layout = QtGui.QVBoxLayout()
+        save_layout = QVBoxLayout()
         save_layout.addWidget(self.save_button)
         save_layout.addWidget(self.bipolar_box)
 
@@ -1110,29 +1173,29 @@ class TaskBarLayout(QtGui.QHBoxLayout):
         self.addWidget(self.load_gridmap_file)
         self.addWidget(self.switch_coordinate_system)
 
-        self.auto_save_checkbox = QtGui.QCheckBox("Enable Auto-save")
+        self.auto_save_checkbox = QCheckBox("Enable Auto-save")
         self.auto_save_checkbox.setChecked(True)
         self.auto_save_checkbox.stateChanged.connect(self.toggle_autosave)
         
         save_layout.addWidget(self.auto_save_checkbox)
         
         # Add MRI loading button
-        self.load_mri_button = QtGui.QPushButton("Load MRI")
+        self.load_mri_button = QPushButton("Load MRI")
         self.load_mri_button.setEnabled(False)
         
         # Add opacity sliders
-        self.mri_opacity = QtGui.QSlider(QtCore.Qt.Horizontal)
+        self.mri_opacity = QSlider(Qt.Orientation.Horizontal)
         self.mri_opacity.setRange(0, 100)
         self.mri_opacity.setValue(50)
         self.mri_opacity.setEnabled(False)
         
-        mri_layout = QtGui.QVBoxLayout()
+        mri_layout = QVBoxLayout()
         mri_layout.addWidget(self.load_mri_button)
-        mri_layout.addWidget(QtGui.QLabel("MRI Opacity:"))
+        mri_layout.addWidget(QLabel("MRI Opacity:"))
         mri_layout.addWidget(self.mri_opacity)
         
         # Add Translate Coordinates button
-        self.translate_coords_button = QtGui.QPushButton("Translate Coordinates")
+        self.translate_coords_button = QPushButton("Translate Coordinates")
         self.translate_coords_button.setEnabled(True)
         
         # Add to layout near the end
@@ -1140,16 +1203,16 @@ class TaskBarLayout(QtGui.QHBoxLayout):
         self.addWidget(self.translate_coords_button)
 
     def toggle_autosave(self, state):
-        if state == QtCore.Qt.Checked:
+        if state == Qt.Checked:
             self.parent().controller.autosave_timer.start()
         else:
             self.parent().controller.autosave_timer.stop()
 
-class CloudWidget(QtGui.QWidget):
+class CloudWidget(QWidget):
     def __init__(self, controller, config, parent=None):
         super(CloudWidget, self).__init__(parent)
         self.config = config
-        layout = QtGui.QVBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
@@ -1469,7 +1532,7 @@ class AxisView(CloudView):
 if __name__ == '__main__':
     # controller = PylocControl(yaml.load(open(os.path.join(os.path.dirname(__file__) , "../config.yml"))))
     #controller = PylocControl()
-    controller = PylocControl(yaml.load(open(os.path.join(os.path.dirname(__file__), "../config.yml"))))
+    controller = PylocControl(yaml.load(open(os.path.join(os.path.dirname(__file__), "../config.yml")), Loader=yaml.SafeLoader))
 
     # controller.load_ct("../T01_R1248P_CT.nii.gz")
     # controller.load_ct('/Volumes/rhino_mount/data10/RAM/subjects/R1226D/tal/images/combined/R1226D_CT_combined.nii.gz')
@@ -1482,15 +1545,15 @@ if __name__ == '__main__':
     controller.exec_()
 
 if __name__ == 'x__main__':
-    app = QtGui.QApplication.instance()
-    x = LeadDefinitionWidget(None, yaml.load(open(os.path.join(os.path.dirname(__file__), "../model/config.yml"))))
+    app = QApplication.instance()
+    x = LeadDefinitionWidget(None, yaml.load(open(os.path.join(os.path.dirname(__file__), "../model/config.yml")), Loader=yaml.SafeLoader))
     x.show()
-    window = QtGui.QMainWindow()
+    window = QMainWindow()
     window.setCentralWidget(x)
     window.show()
-    app.exec_()
+    app.exec()
 
-class TranslateCoordinatesWidget(QtGui.QWidget):
+class TranslateCoordinatesWidget(QWidget):
     def __init__(self, controller, parent=None):
         super(TranslateCoordinatesWidget, self).__init__(parent)
         self.controller = controller
@@ -1510,48 +1573,48 @@ class TranslateCoordinatesWidget(QtGui.QWidget):
         self.update_ui_state()
         
     def create_ui(self):
-        layout = QtGui.QVBoxLayout(self)
+        layout = QVBoxLayout(self)
         
         # Reference CT section
-        ref_group = QtGui.QGroupBox("Reference CT")
-        ref_layout = QtGui.QVBoxLayout(ref_group)
+        ref_group = QGroupBox("Reference CT")
+        ref_layout = QVBoxLayout(ref_group)
         
-        self.ref_ct_button = QtGui.QPushButton("Load Reference CT")
-        self.ref_ct_label = QtGui.QLabel("No reference CT loaded")
+        self.ref_ct_button = QPushButton("Load Reference CT")
+        self.ref_ct_label = QLabel("No reference CT loaded")
         
         ref_layout.addWidget(self.ref_ct_button)
         ref_layout.addWidget(self.ref_ct_label)
         
         # Floating CT section
-        float_group = QtGui.QGroupBox("Floating CT")
-        float_layout = QtGui.QVBoxLayout(float_group)
+        float_group = QGroupBox("Floating CT")
+        float_layout = QVBoxLayout(float_group)
         
-        self.floating_ct_button = QtGui.QPushButton("Load Floating CT")
-        self.floating_ct_label = QtGui.QLabel("No floating CT loaded")
+        self.floating_ct_button = QPushButton("Load Floating CT")
+        self.floating_ct_label = QLabel("No floating CT loaded")
         
         float_layout.addWidget(self.floating_ct_button)
         float_layout.addWidget(self.floating_ct_label)
         
         # Registration section
-        reg_group = QtGui.QGroupBox("Registration")
-        reg_layout = QtGui.QVBoxLayout(reg_group)
+        reg_group = QGroupBox("Registration")
+        reg_layout = QVBoxLayout(reg_group)
         
-        self.register_button = QtGui.QPushButton("Register CTs")
+        self.register_button = QPushButton("Register CTs")
         self.register_button.setEnabled(False)
-        self.register_status = QtGui.QLabel("Not registered")
+        self.register_status = QLabel("Not registered")
         
         reg_layout.addWidget(self.register_button)
         reg_layout.addWidget(self.register_status)
         
         # Coordinates section
-        coords_group = QtGui.QGroupBox("Coordinates")
-        coords_layout = QtGui.QVBoxLayout(coords_group)
+        coords_group = QGroupBox("Coordinates")
+        coords_layout = QVBoxLayout(coords_group)
         
-        self.load_coords_button = QtGui.QPushButton("Load Coordinates")
+        self.load_coords_button = QPushButton("Load Coordinates")
         self.load_coords_button.setEnabled(False)
-        self.coords_label = QtGui.QLabel("No coordinates loaded")
+        self.coords_label = QLabel("No coordinates loaded")
         
-        self.transform_coords_button = QtGui.QPushButton("Transform Coordinates")
+        self.transform_coords_button = QPushButton("Transform Coordinates")
         self.transform_coords_button.setEnabled(False)
         
         coords_layout.addWidget(self.load_coords_button)
@@ -1559,7 +1622,7 @@ class TranslateCoordinatesWidget(QtGui.QWidget):
         coords_layout.addWidget(self.transform_coords_button)
         
         # Progress indicator
-        self.progress_bar = QtGui.QProgressBar()
+        self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         
         # Add sections to main layout
@@ -1592,7 +1655,7 @@ class TranslateCoordinatesWidget(QtGui.QWidget):
         self.transform_coords_button.setEnabled(is_registered and has_coords)
         
     def load_reference_ct(self):
-        file_path, _ = QtGui.QFileDialog().getOpenFileName(self, 'Select Reference CT Scan', '.', '(*)')
+        file_path, _ = QFileDialog().getOpenFileName(self, 'Select Reference CT Scan', '.', '(*)')
         if file_path:
             log.debug(f"Loading reference CT from {file_path}")
             self.ref_ct_path = file_path
@@ -1605,7 +1668,7 @@ class TranslateCoordinatesWidget(QtGui.QWidget):
             self.update_ui_state()
             
     def load_floating_ct(self):
-        file_path, _ = QtGui.QFileDialog().getOpenFileName(self, 'Select Floating CT Scan', '.', '(*)')
+        file_path, _ = QFileDialog().getOpenFileName(self, 'Select Floating CT Scan', '.', '(*)')
         if file_path:
             log.debug(f"Loading floating CT from {file_path}")
             self.floating_ct_path = file_path
@@ -1618,7 +1681,7 @@ class TranslateCoordinatesWidget(QtGui.QWidget):
             self.update_ui_state()
             
     def load_coordinates(self):
-        file_path, _ = QtGui.QFileDialog().getOpenFileName(self, 'Select Coordinates File', '.', '(*.json *.txt)')
+        file_path, _ = QFileDialog().getOpenFileName(self, 'Select Coordinates File', '.', '(*.json *.txt)')
         ct = CT(self.controller.config)
         self.coordinates_data = {}
         if file_path:
@@ -1638,7 +1701,7 @@ class TranslateCoordinatesWidget(QtGui.QWidget):
     def register_ct_scans(self):
         """Register the floating CT to the reference CT using SimpleITK"""
         if not self.ref_ct or not self.floating_ct:
-            QtGui.QMessageBox.warning(self, 'Registration Error', 
+            QMessageBox.warning(self, 'Registration Error', 
                               'Both reference and floating CT scans must be loaded')
             return
             
@@ -1667,11 +1730,11 @@ class TranslateCoordinatesWidget(QtGui.QWidget):
             self.register_status.setText("Registered with fallback method ✓")
             self.update_ui_state()
             self.progress_bar.setValue(100)
-            QtGui.QMessageBox.information(self, 'Registration Complete', 
+            QMessageBox.information(self, 'Registration Complete', 
                                         'Successfully registered CT scans using fallback method')
         except Exception as nested_e:
             log.error(f"Fallback registration failed: {str(nested_e)}")
-            QtGui.QMessageBox.warning(self, 'Registration Error', 
+            QMessageBox.warning(self, 'Registration Error', 
                                 f'Failed to register CT scans: {str(e)}\nFallback also failed: {str(nested_e)}')
         finally:
             self.progress_bar.setVisible(False)
@@ -1680,7 +1743,7 @@ class TranslateCoordinatesWidget(QtGui.QWidget):
         """Transform coordinates from floating space to reference space"""
         if self.registration_transform is None:
             log.warning("Transformation attempted without registration")
-            QtGui.QMessageBox.warning(self, 'Transformation Error', 
+            QMessageBox.warning(self, 'Transformation Error', 
                                      'CT scans must be registered first')
             return
             
@@ -1689,7 +1752,7 @@ class TranslateCoordinatesWidget(QtGui.QWidget):
             transformed_data = self.apply_transform_to_coordinates(self.coordinates_data)
             
             # Prompt for save location
-            save_file, _ = QtGui.QFileDialog().getSaveFileName(self, 
+            save_file, _ = QFileDialog().getSaveFileName(self, 
                                                            'Save Transformed Coordinates', 
                                                            '.', 
                                                            'JSON (*.json);;TXT (*.txt)')
@@ -1704,12 +1767,12 @@ class TranslateCoordinatesWidget(QtGui.QWidget):
                         for lead_name, lead_data in transformed_data.items():
                             f.write(f"{lead_name} \t{lead_data['x']} \t{lead_data['y']} \t{lead_data['z']} \t{lead_data['lead_type']} \t{lead_data['dim_x']} \t{lead_data['dim_y']}\n")                        
                 
-                QtGui.QMessageBox.information(self, 'Transformation Complete', 
+                QMessageBox.information(self, 'Transformation Complete', 
                                             f'Transformed coordinates saved to {save_file}')
                 
         except Exception as e:
             log.error(f"Coordinate transformation failed: {str(e)}")
-            QtGui.QMessageBox.warning(self, 'Transformation Error', 
+            QMessageBox.warning(self, 'Transformation Error', 
                                     f'Failed to transform coordinates: {str(e)}')
     
     def apply_transform_to_coordinates(self, coordinates_data):
