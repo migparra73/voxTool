@@ -7,10 +7,6 @@ try:
     from traits.api import HasTraits, Instance, on_trait_change
     from traitsui.api import View, Item
     
-    print("slice_viewer: importing mayavi...")
-    from mayavi.core.ui.api import MayaviScene, MlabSceneModel, SceneEditor
-    from mayavi import mlab
-    
     print("slice_viewer: importing PySide6...")
     from PySide6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QLabel, QSizePolicy, QApplication
     from PySide6.QtCore import Qt

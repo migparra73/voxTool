@@ -35,12 +35,9 @@ print("pyloc: importing view.slice_viewer...")
 from view.slice_viewer import SliceViewWidget
 print("pyloc: view.slice_viewer OK")
 
-print("pyloc: importing mayavi...")
-from mayavi.core.ui.api import MayaviScene, MlabSceneModel, \
-    SceneEditor
-from mayavi import mlab
-print("pyloc: mayavi OK")
-
+print("pyloc: importing pyvista...")
+from view.pyvista_viewer_simple import PyVistaScene, PyVistaSceneModel
+print("pyloc: pyvista OK")
 print("pyloc: importing traits.api...")
 from traits.api import HasTraits, Instance, on_trait_change
 print("pyloc: traits.api OK")
@@ -486,7 +483,38 @@ class PylocControl(object):
         self.selected_coordinate = coordinate
         radius = self.selected_lead.radius if not self.selected_lead is None else 5
         log.debug("Selecting points near coordinate {} with radius {}".format(coordinate, radius))
-        self.ct.select_points_near(coordinate, radius)
+        
+        # Debug: Check if we have any points in our data
+        if hasattr(self.ct, '_points') and self.ct._points is not None:
+            all_coords = self.ct._points.get_coordinates()
+            log.debug(f"select_coordinate: CT has {len(all_coords)} total points")
+            log.debug(f"select_coordinate: CT coordinate range: min={np.min(all_coords, axis=0)}, max={np.max(all_coords, axis=0)}")
+        else:
+            log.warning("select_coordinate: CT points not available")
+        
+        # Try to select points near the coordinate
+        try:
+            self.ct.select_points_near(coordinate, radius)
+            
+            # Check if selection was successful
+            if hasattr(self.ct, '_selection') and self.ct._selection is not None:
+                selected_coords = self.ct._selection.coordinates()
+                log.debug(f"select_coordinate: Selected {len(selected_coords)} points")
+                if len(selected_coords) == 0:
+                    log.warning(f"select_coordinate: No points found within radius {radius} of coordinate {coordinate}")
+                    # Try with a larger radius
+                    larger_radius = radius * 3
+                    log.debug(f"select_coordinate: Trying with larger radius {larger_radius}")
+                    self.ct.select_points_near(coordinate, larger_radius)
+                    selected_coords = self.ct._selection.coordinates()
+                    log.debug(f"select_coordinate: With larger radius, selected {len(selected_coords)} points")
+            else:
+                log.warning("select_coordinate: CT selection not available")
+        except Exception as e:
+            log.error(f"select_coordinate: Error selecting points: {e}")
+            import traceback
+            log.error(f"select_coordinate: Traceback: {traceback.format_exc()}")
+        
         if do_center:
             log.debug("Centering selection")
             self.center_selection(self.config['selection_iterations'], radius)
@@ -562,13 +590,23 @@ class PylocControl(object):
                                 "Are you sure you want to continue?".format(lead_location, lead.dimensions)):
                 return
 
-        self.ct.add_selection_to_lead(lead_label, contact_label, lead_location, self.lead_group)
-        self.view.contact_panel.set_chosen_leads(self.ct.get_leads())
-        self.ct.clear_selection()
-        self.view.update_cloud('_leads')
-        self.view.update_cloud('_selected')
+        try:
+            self.ct.add_selection_to_lead(lead_label, contact_label, lead_location, self.lead_group)
+            self.view.contact_panel.set_chosen_leads(self.ct.get_leads())
+            self.ct.clear_selection()
+            self.view.update_cloud('_leads')
+            self.view.update_cloud('_selected')
 
-        self.select_next_contact_label()
+            self.select_next_contact_label()
+        except ValueError as e:
+            # Handle case where no valid selection was made
+            QMessageBox.warning(None, "Error adding selection", 
+                      f"Cannot add selection to lead: {str(e)}\n\n"
+                      f"Please make sure you have:\n"
+                      f"1. Right-clicked on a point in the 3D view\n"
+                      f"2. Made a valid selection near electrode contacts\n"
+                      f"3. The selection is not empty")
+            log.error(f"Failed to add selection to lead {lead_label}: {e}")
 
     def select_next_contact_label(self):
         lead = self.selected_lead
@@ -759,6 +797,7 @@ class ContactPanelWidget(QWidget):
         super(ContactPanelWidget, self).__init__(parent)
         self.config = config
         self.controller = controller
+        self.view = parent  # Store reference to the main view
 
         layout = QVBoxLayout(self)
 
@@ -867,8 +906,19 @@ class ContactPanelWidget(QWidget):
 
     def chosen_lead_selected(self):
         current_index = self.contact_list.currentIndex()
+        if current_index.row() < 0 or current_index.row() >= len(self.contacts):
+            return
+            
         _, current_contact = self.contacts[current_index.row()]
         log.debug("Selecting contact {}".format(current_contact.label))
+        
+        # Highlight the selected contact
+        if hasattr(self.view, 'cloud_widget') and hasattr(self.view.cloud_widget, 'viewer'):
+            contact_coordinates = [current_contact.center]
+            log.debug(f"Highlighting contact at coordinates: {contact_coordinates}")
+            self.view.cloud_widget.viewer.highlight_contacts(contact_coordinates)
+        
+        # Also select the coordinate (existing behavior)
         self.controller.select_coordinate(current_contact.center, False, False)
 
     def set_contact_label(self, label):
@@ -1217,10 +1267,10 @@ class CloudWidget(QWidget):
         layout.setSpacing(0)
 
         self.viewer = CloudViewer(config)
-        self.ui = self.viewer.edit_traits(parent=self,
-                                          kind='subpanel').control
-
-        layout.addWidget(self.ui)
+        
+        # Instead of using TraitsUI, directly embed the PyVista scene widget
+        layout.addWidget(self.viewer.scene.scene)
+        
         self.controller = controller
 
     def update_cloud(self, label):
@@ -1258,37 +1308,167 @@ class CloudWidget(QWidget):
 class CloudViewer(HasTraits):
     BACKGROUND_COLOR = (.1, .1, .1)
 
-    scene = Instance(MlabSceneModel, ())
+    # Class-level persistent color mapping to maintain lead colors across sessions
+    _lead_color_assignments = {}
+    _next_color_index = 0
+    
+    # Define distinct RGB colors for different electrode shanks/leads
+    _lead_rgb_colors = [
+        [1.0, 0.0, 0.0],    # Red
+        [0.0, 0.8, 0.0],    # Green  
+        [0.0, 0.0, 1.0],    # Blue
+        [1.0, 0.8, 0.0],    # Yellow
+        [1.0, 0.0, 1.0],    # Magenta
+        [0.0, 0.8, 1.0],    # Cyan
+        [1.0, 0.5, 0.0],    # Orange
+        [0.6, 0.0, 1.0],    # Purple
+        [0.0, 0.6, 0.0],    # Dark green
+        [0.8, 0.8, 0.0],    # Olive
+        [0.8, 0.4, 0.2],    # Brown
+        [1.0, 0.6, 0.8],    # Pink
+    ]
+
+    scene = Instance(PyVistaSceneModel, ())
 
     def __init__(self, config):
         super(CloudViewer, self).__init__()
         self.config = config
-        self.figure = self.scene.mlab.gcf()
-        mlab.figure(self.figure, bgcolor=self.BACKGROUND_COLOR)
+        self.scene = PyVistaSceneModel()
+        self.plotter = self.scene.plotter
+        self.scene.set_background_color(self.BACKGROUND_COLOR)
         self.clouds = {}
         self.text_displayed = None
         self.RAS = None
+        
+        # Connect picking signal
+        log.debug("CloudViewer.__init__: Connecting point picking signal...")
+        self.scene.scene.point_picked.connect(self.on_point_picked)
+        log.debug("CloudViewer.__init__: Point picking signal connected")
+
+    @classmethod
+    def get_lead_color(cls, lead_name):
+        """Get a persistent color for a lead name. Once assigned, the color never changes."""
+        if lead_name not in cls._lead_color_assignments:
+            # Assign the next available color
+            color_index = cls._next_color_index % len(cls._lead_rgb_colors)
+            cls._lead_color_assignments[lead_name] = cls._lead_rgb_colors[color_index]
+            cls._next_color_index += 1
+            log.debug(f"CloudViewer.get_lead_color: Assigned color {color_index} to lead '{lead_name}': {cls._lead_rgb_colors[color_index]}")
+        
+        return cls._lead_color_assignments[lead_name]
+    
+    @classmethod
+    def reset_color_assignments(cls):
+        """Reset all color assignments (useful for new sessions)"""
+        cls._lead_color_assignments.clear()
+        cls._next_color_index = 0
+        log.debug("CloudViewer.reset_color_assignments: All lead color assignments cleared")
+
+    def on_point_picked(self, point):
+        """Handle point picking events from PyVista"""
+        log.debug(f"CloudViewer.on_point_picked: Point picked at {point}")
+        
+        # Convert to the callback format expected by the rest of the code
+        class MockPicker:
+            def __init__(self, point):
+                self.pick_position = point
+        picker = MockPicker(point)
+        
+        log.debug(f"CloudViewer.on_point_picked: Available clouds: {list(self.clouds.keys())}")
+        
+        # Prioritize the '_ct' cloud for picking (main interaction)
+        if '_ct' in self.clouds and self.clouds['_ct'].contains(picker):
+            log.debug("CloudViewer.on_point_picked: Delegating to '_ct' cloud callback")
+            self.clouds['_ct'].callback(picker)
+            return
+        
+        # Find which cloud contains this point and call its callback
+        for label, cloud_view in self.clouds.items():
+            if cloud_view.contains(picker):
+                log.debug(f"CloudViewer.on_point_picked: Delegating to '{label}' cloud callback")
+                cloud_view.callback(picker)
+                break
+        else:
+            log.warning("CloudViewer.on_point_picked: No cloud found to handle the picked point")
 
     def update_cloud(self, label):
-        if self.clouds:
+        if self.clouds and label in self.clouds:
             self.clouds[label].update()
 
     def plot_cloud(self,label):
-        self.clouds[label].plot()
+        if label in self.clouds:
+            self.clouds[label].plot()
 
     def unplot_cloud(self,label):
-        self.clouds[label].unplot()
+        if label in self.clouds:
+            self.clouds[label].unplot()
 
     def add_cloud(self, ct, label, callback=None):
         log.debug("CloudViewer.add_cloud: Adding cloud {} to view".format(label))
         if label in self.clouds:
             log.debug("CloudViewer.add_cloud: Cloud {} already exists, removing...".format(label))
             self.remove_cloud(label)
-        self.clouds[label] = CloudView(ct, label, self.config, callback)
+        self.clouds[label] = CloudView(ct, label, self.config, self.scene.scene, callback)
         self.clouds[label].plot()
 
+    def highlight_contacts(self, coordinates):
+        """Highlight specific contacts by coordinates with enhanced visibility"""
+        log.debug(f"CloudViewer.highlight_contacts: Highlighting {len(coordinates)} contacts")
+        
+        # Remove existing highlighted cloud if any
+        if '_highlighted' in self.clouds:
+            self.remove_cloud('_highlighted')
+            
+        if len(coordinates) > 0:
+            # Create a temporary CT-like object for the highlighted points
+            class HighlightedPoints:
+                def __init__(self, coords):
+                    self.coords = coords
+                    
+                def xyz(self, label):
+                    if label == '_highlighted':
+                        labels = ['_highlighted'] * len(self.coords)
+                        x = [coord[0] for coord in self.coords]
+                        y = [coord[1] for coord in self.coords]
+                        z = [coord[2] for coord in self.coords]
+                        return labels, x, y, z
+                    return [], [], [], []
+            
+            highlighted_ct = HighlightedPoints(coordinates)
+            self.clouds['_highlighted'] = CloudView(highlighted_ct, '_highlighted', self.config, self.scene.scene)
+            
+            # Override plot method to use enhanced visual properties for highlighting
+            original_plot = self.clouds['_highlighted'].plot
+            def enhanced_plot():
+                labels, x, y, z = highlighted_ct.xyz('_highlighted')
+                if len(x) == 0:
+                    return
+                    
+                points = np.column_stack((x, y, z))
+                # Bright white color for highlight
+                colors = np.array([[1.0, 1.0, 1.0]] * len(points))
+                
+                log.debug(f"CloudView.enhanced_plot: Adding highlighted points")
+                self.clouds['_highlighted']._plot = self.clouds['_highlighted'].scene.add_point_cloud(
+                    points=points,
+                    colors=colors,
+                    name=self.clouds['_highlighted']._actor_name,
+                    mode='cube',
+                    opacity=1.0,
+                    point_size=12,  # Larger size for visibility
+                    constant_size=True,  # Keep size constant regardless of zoom
+                )
+                
+            self.clouds['_highlighted'].plot = enhanced_plot
+            self.clouds['_highlighted'].plot()
+            
+    def clear_highlights(self):
+        """Clear all highlighted contacts"""
+        if '_highlighted' in self.clouds:
+            self.remove_cloud('_highlighted')
+
     def add_RAS(self,ct,callback=None):
-        self.RAS = AxisView(ct,self.config,callback)
+        self.RAS = AxisView(ct,self.config,self.scene.scene,callback)
         self.RAS.plot()
 
     def switch_RAS_LAS(self):
@@ -1298,35 +1478,23 @@ class CloudViewer(HasTraits):
         self.clouds[label].unplot()
         del self.clouds[label]
 
-    @on_trait_change('scene.activated')
     def plot(self):
-        self.figure.on_mouse_pick(self.callback)
+        # Point picking is already set up in __init__ via self.scene.scene.point_picked.connect()
         for view in self.clouds.values():
             view.plot()
 
     def update_all(self):
-        mlab.figure(self.figure, bgcolor=self.BACKGROUND_COLOR)
+        self.scene.set_background_color(self.BACKGROUND_COLOR)
         for view in self.clouds.values():
             view.update()
 
-    def callback(self, picker):
-        found = False
-        for cloud in self.clouds.values():
-            if (cloud.contains(picker)):
-                if cloud.callback(picker):
-                    return True
-                found = True
-        return found
-
     def display_message(self, msg):
-        if self.text_displayed is not None:
-            self.text_displayed.set(text=msg)
+        if self.text_displayed:
+            self.scene.scene.remove_text('message')
+        if msg:
+            self.text_displayed = self.scene.scene.add_text(msg, position=(0.01, 0.95), name='message')
         else:
-            self.text_displayed = mlab.text(0.01, 0.95, msg, figure=self.figure, width=1)
-
-    view = View(Item('scene', editor=SceneEditor(scene_class=MayaviScene),
-                     height=250, width=300, show_label=False),
-                resizable=True)
+            self.text_displayed = None
 
 
 class CloudView(object):
@@ -1335,10 +1503,12 @@ class CloudView(object):
             return self.config['colormaps']['ct']
         elif label == '_selected':
             return self.config['colormaps']['selected']
+        elif label == '_highlighted':
+            return 'Reds'  # Use red colormap for highlighting
         else:
-            return self.config['colormaps']['default']
+            return 'Set1'  # Use categorical colormap for leads
 
-    def __init__(self, ct, label, config, callback=None):
+    def __init__(self, ct, label, config, scene, callback=None):
         log.debug("CloudView.__init__: Setting ct")
         self.ct = ct
         log.debug("CloudView.__init__: Setting config")
@@ -1349,32 +1519,54 @@ class CloudView(object):
         self.colormap = self.get_colormap(label)
         log.debug("CloudView.__init__: Setting callback")
         self._callback = callback if callback else lambda *_: None
+        log.debug("CloudView.__init__: Setting scene")
+        self.scene = scene
         log.debug("CloudView.__init__: Setting plot and glyph to None")
         self._plot = None
-        self._glyph_points = None
+        self._actor_name = f"cloud_{label}"
         log.debug("CloudView.__init__: Done")
 
     def callback(self, picker):
-        return self._callback(np.array(picker.pick_position))
+        log.debug(f"CloudView.callback: Called for label '{self.label}' with pick_position {picker.pick_position}")
+        if self._callback:
+            log.debug(f"CloudView.callback: Calling callback function")
+            return self._callback(np.array(picker.pick_position))
+        else:
+            log.warning(f"CloudView.callback: No callback function defined for '{self.label}'")
 
     def get_colors(self, labels, x, y, z):
-        colors = np.ones(len(x))
         if len(labels) == 0:
             return []
-        min_y = float(min(y))
-        max_y = float(max(y))
+            
+        # Create color array (N x 3 for RGB)
+        colors = np.zeros((len(labels), 3))
+        min_y = float(min(y)) if len(y) > 0 else 0
+        max_y = float(max(y)) if len(y) > 0 else 1
+        
+        # Get unique leads that need color assignment
+        unique_leads = list(set([label for label in labels if label not in ['_ct', '_selected', '_highlighted']]))
+        
+        # Pre-assign colors for all unique leads to ensure consistency
+        for lead_name in unique_leads:
+            CloudViewer.get_lead_color(lead_name)
+        
+        log.debug(f"CloudView.get_colors: Current lead color assignments: {CloudViewer._lead_color_assignments}")
+        
         for i, label in enumerate(labels):
             if label == '_ct':
-                colors[i] = ((y[i] - min_y) / max_y) * \
-                            (self.config['ct_max_color'] - self.config['ct_min_color']) \
-                            + self.config['ct_min_color']
+                # State 1: Unselected CT points - light gray
+                colors[i] = [0.7, 0.7, 0.7]
             elif label == '_selected':
-                colors[i] = .2
+                # State 1: Unselected electrodes - darker gray  
+                colors[i] = [0.5, 0.5, 0.5]
+            elif label == '_highlighted':
+                # State 2: Highlighted electrode - bright white with glow effect
+                colors[i] = [1.0, 1.0, 1.0]
             else:
-                seeded_rand = random.Random(label)
-                colors[i] = seeded_rand.random() * \
-                            (self.config['lead_max_color'] - self.config['lead_min_color']) \
-                            + self.config['lead_min_color']
+                # State 3: Defined electrode shank - use persistent color assignment
+                colors[i] = CloudViewer.get_lead_color(label)
+                
+        log.debug(f"CloudView.get_colors: Generated {len(colors)} RGB colors for label '{self.label}'")
         return colors
 
     def contains(self, picker):
@@ -1383,18 +1575,45 @@ class CloudView(object):
     def plot(self):
         labels, x, y, z = self.ct.xyz(self.label)
         
-        self._plot = mlab.points3d(x, y, z,
-                                   # self.get_colors(labels, x, y, z),
-                                   mode='cube', resolution=16,
-                                   colormap=self.colormap,
-                                   opacity=.5,
-                                   vmax=1, vmin=0,
-                                   scale_mode='none', scale_factor=1
-                                   )
-        self._plot.mlab_source.set(scalars=self.get_colors(labels, x, y, z))
+        # Debug: print information about the data
+        log.debug(f"CloudView.plot: label={self.label}, labels={len(labels)}, x={len(x)}, y={len(y)}, z={len(z)}")
+        
+        # Check if we have any points to plot
+        if len(x) == 0 or len(y) == 0 or len(z) == 0:
+            log.warning(f"No points to plot for label '{self.label}' - skipping")
+            return
+        
+        # Create points array
+        points = np.column_stack((x, y, z))
+        colors = self.get_colors(labels, x, y, z)
+        
+        log.debug(f"CloudView.plot: Created points array with shape {points.shape}")
+        
+        # For large datasets, use simple points instead of cubes for performance
+        render_mode = 'cube'
+        if points.shape[0] > 5000:  # Threshold for switching to points
+            render_mode = 'points'
+            log.debug(f"CloudView.plot: Large dataset ({points.shape[0]} points), using point mode for performance")
+        
+        # Add point cloud to PyVista scene
+        log.debug(f"CloudView.plot: Adding point cloud with mode={render_mode} for {points.shape[0]} points...")
+        self._plot = self.scene.add_point_cloud(
+            points=points,
+            colors=colors,
+            name=self._actor_name,
+            mode=render_mode,
+            opacity=0.5,
+            scale_factor=1,
+            cmap=self.colormap,
+            constant_size=True,  # Keep size constant regardless of zoom
+            callback=self.callback,  # Pass callback for point picking
+        )
+        log.debug(f"CloudView.plot: Point cloud added successfully")
 
     def unplot(self):
-        self._plot.mlab_source.reset(x=[], y=[], z=[], scalars=[])
+        if self._plot:
+            self.scene.remove_point_cloud(self._actor_name)
+            self._plot = None
     '''
     def update(self):
         labels, x, y, z = self.ct.xyz(self.label)
@@ -1404,58 +1623,51 @@ class CloudView(object):
     '''
     def update(self):
         labels, x, y, z = self.ct.xyz(self.label)
-        # Ensure x, y, z, and colors are numpy arrays of a compatible type, e.g., np.float32
-
         log.debug("Updating cloud {} with {} points".format(self.label, len(labels)))
-        #self._plot.mlab_source.set(x=x, y=y, z=z, scalars=self.get_colors(labels, x, y, z))    
-#        self._plot.mlab_source.reset(x=x, y=y, z=z, scalars=self.get_colors(labels, x, y, z))
-
-        #Save camera settings
-        position = self._plot.scene.camera.position
-        focal_point = self._plot.scene.camera.focal_point
-        view_angle = self._plot.scene.camera.view_angle
-        clipping_range = self._plot.scene.camera.clipping_range
-        parallel_scale = self._plot.scene.camera.parallel_scale
-        #Disable rendering
-        self._plot.scene.disable_render = True
-        # Delete old plot
-        self._plot.remove()
-        #mlab.clf()
-        #Generate new plot
-        self._plot = mlab.points3d(x, y, z,
-                                   # self.get_colors(labels, x, y, z),
-                                   mode='cube', resolution=16,
-                                   colormap=self.colormap,
-                                   opacity=.5,
-                                   vmax=1, vmin=0,
-                                   scale_mode='none', scale_factor=1
-                                   )
-        #Reset camera
-        self._plot.scene.camera.position = position
-        self._plot.scene.camera.focal_point = focal_point
-        self._plot.scene.camera.view_angle = view_angle
-        self._plot.scene.camera.clipping_range = clipping_range
-        self._plot.scene.camera.parallel_scale = parallel_scale
-        #Re-enable rendering
-        self._plot.scene.disable_render = False
-        # Force a render
-        self._plot.mlab_source.set(scalars=self.get_colors(labels, x, y, z))
-        self._plot.scene.render()
-        # Display the plot with the previous camera position
-        self._plot.scene.camera.position = position
-        self._plot.scene.camera.focal_point = focal_point
-        self._plot.scene.camera.view_angle = view_angle
-        self._plot.scene.camera.clipping_range = clipping_range
-        self._plot.scene.camera.parallel_scale = parallel_scale
-        self._plot.scene.render()
+        
+        # Check if we have any points to plot
+        if len(x) == 0 or len(y) == 0 or len(z) == 0:
+            log.warning(f"No points to update for label '{self.label}' - skipping")
+            # Remove existing plot if any
+            if self._plot:
+                self.scene.remove_point_cloud(self._actor_name)
+                self._plot = None
+            return
+        
+        # Save camera position
+        camera_position = self.scene.get_camera_position()
+        
+        # Remove old plot and create new one
+        if self._plot:
+            self.scene.remove_point_cloud(self._actor_name)
+        
+        # Create new plot with updated data
+        points = np.column_stack((x, y, z))
+        colors = self.get_colors(labels, x, y, z)
+        
+        self._plot = self.scene.add_point_cloud(
+            points=points,
+            colors=colors,
+            name=self._actor_name,
+            mode='cube',
+            opacity=0.5,
+            scale_factor=1,
+            cmap=self.colormap,
+            constant_size=True,  # Keep size constant regardless of zoom
+        )
+        
+        # Restore camera position
+        self.scene.set_camera_position(camera_position)
+        self.scene.render()
 
 
 class AxisView(CloudView):
 
-    def __init__(self,ct,config,callback=None):
-        super(AxisView, self).__init__(ct,config=config,label='Axis',callback=callback)
+    def __init__(self,ct,config,scene,callback=None):
+        super(AxisView, self).__init__(ct,config=config,scene=scene,label='Axis',callback=callback)
         self.scale = 35
         self._plots = []
+        self._text_actors = []
 
     def plot(self):
         coords = self.ct._points.coordinates
@@ -1483,7 +1695,7 @@ class AxisView(CloudView):
                 nonZero = np.nonzero(axis)
                 # Assert if there are more than one non-zero element
                 assert len(nonZero) == 1
-                selectedAxis = int(nonZero[0]) 
+                selectedAxis = int(nonZero[0][0])  # Fix indexing issue
                 name_pair = name_pair_list[selectedAxis]
                 for name in name_pair:
                     location  = center.copy()
@@ -1493,12 +1705,15 @@ class AxisView(CloudView):
                     else:
                         loc = max_dist*1.25 * np.sign(axis[selectedAxis])
                         location[i] -= loc
-                    color = [0.,0.,0.]
-                    color[i] = 1.
-                    letter = mlab.text3d(location[0], location[1], location[2], name, color=tuple(color), scale=self.scale,
-                                         opacity=0.75,
-                                         )
-                    self._plots.append(letter)
+                    
+                    # Use PyVista text instead of mlab.text3d
+                    text_name = f"axis_text_{name}_{i}"
+                    text_actor = self.scene.add_text(
+                        name, 
+                        position=location, 
+                        name=text_name
+                    )
+                    self._text_actors.append(text_name)
         except TypeError as e:
             log.error("Could not plot RAS axes: {}".format(e))
         except IndexError as e:
@@ -1515,17 +1730,21 @@ class AxisView(CloudView):
         return
 
     def hide(self):
-        for plot in self._plots:
-            plot.visible=False
+        # PyVista doesn't have direct visibility control for text, so we'll remove/add
+        pass
 
     def show(self):
-        for plot in self._plots:
-            plot.visible = True
+        # PyVista doesn't have direct visibility control for text, so we'll remove/add  
+        pass
 
     def unplot(self):
-        for plot in self._plots:
-            plot.remove()
-        self._plots = []
+        # Remove text actors
+        for text_name in self._text_actors:
+            self.scene.remove_text(text_name)
+        self._text_actors = []
+        
+        # Call parent unplot for any point clouds
+        super().unplot()
 
 
 

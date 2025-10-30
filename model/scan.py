@@ -879,6 +879,15 @@ class CT(object):
 
     def add_selection_to_lead(self, lead_label, contact_label, lead_location,
                               lead_group):
+        # Check if selection has valid points before adding
+        if len(self._selection.coordinates()) == 0:
+            raise ValueError(f"No points selected. Cannot add empty selection to lead {lead_label}.")
+        
+        # Check if selection center is valid (not NaN)
+        center = self._selection.get_center()
+        if np.isnan(center).any():
+            raise ValueError(f"Selection center is invalid (NaN). Cannot add selection to lead {lead_label}.")
+        
         self._leads[lead_label].add_contact(self._selection, contact_label,
                                             lead_location, lead_group)
 

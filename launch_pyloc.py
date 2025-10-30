@@ -64,10 +64,10 @@ try:
     from view.slice_viewer import SliceViewWidget
     print("  view.slice_viewer import successful")
     
-    print("  Importing mayavi...")
-    from mayavi.core.ui.api import MayaviScene, MlabSceneModel, SceneEditor
-    from mayavi import mlab
-    print("  mayavi imports successful")
+    print("  Importing pyvista...")
+    import pyvista as pv
+    import pyvistaqt as pvqt
+    print("  pyvista imports successful")
     
     print("  Importing traits...")
     from traits.api import HasTraits, Instance, on_trait_change
@@ -103,13 +103,11 @@ try:
         print("      slice_viewer...")
         from view.slice_viewer import SliceViewWidget
         
-        print("      mayavi core...")
-        from mayavi.core.ui.api import MayaviScene, MlabSceneModel, SceneEditor
+        print("      pyvista...")
+        import pyvista as pv
+        import pyvistaqt as pvqt
         
-        print("      mayavi mlab...")
-        from mayavi import mlab
-        
-        print("      traits api...")
+        print("      traits and traitsui...")
         from traits.api import HasTraits, Instance, on_trait_change
         
         print("      traitsui api...")
