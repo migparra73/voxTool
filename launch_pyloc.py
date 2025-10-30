@@ -1,5 +1,83 @@
 #! /usr/bin/env python
 
+"""
+VoxTool Medical Imaging Application Launcher
+
+This module serves as the main entry point for the VoxTool medical imaging
+application, handling environment setup, dependency verification, and
+graceful application initialization for neurological electrode localization
+workflows.
+
+Core Responsibilities:
+---------------------
+1. **Environment Configuration**: Qt backend and matplotlib setup for medical imaging
+2. **Dependency Validation**: Verification of critical medical imaging libraries
+3. **Error Handling**: Graceful failure with diagnostic information
+4. **Application Bootstrap**: Main application controller initialization
+5. **Resource Management**: Icon, configuration, and asset loading
+6. **Cross-Platform Support**: Windows, Linux, macOS compatibility
+
+Medical Application Context:
+---------------------------
+VoxTool is a specialized medical imaging application for:
+- **Electrode Localization**: CT scan analysis for implanted medical electrodes
+- **Neurological Procedures**: Support for epilepsy monitoring and neurosurgery
+- **3D Visualization**: Advanced rendering of medical imaging data
+- **Clinical Workflows**: Integration with hospital imaging systems
+
+Technical Architecture:
+----------------------
+- **Qt6 Integration**: PySide6 for modern medical imaging interfaces
+- **PyVista/VTK**: Advanced 3D medical visualization capabilities
+- **Medical File I/O**: Support for NIFTI and other medical imaging formats
+- **Configuration Management**: YAML-based application settings
+- **Error Recovery**: Robust error handling for clinical environments
+
+Environment Setup Process:
+--------------------------
+1. Configure Qt backend (PySide6) for optimal medical imaging performance
+2. Set matplotlib backend for compatibility with Qt medical interfaces
+3. Validate critical dependencies (nibabel, PyVista, traits)
+4. Load application configuration from YAML files
+5. Initialize logging for medical application diagnostics
+6. Create main application controller and GUI
+7. Set application icon and window properties
+8. Enter Qt event loop for interactive medical workflows
+
+Error Handling Strategy:
+-----------------------
+- **Graceful Degradation**: Continue with reduced functionality when possible
+- **Diagnostic Output**: Detailed error messages for technical support
+- **Early Detection**: Validate dependencies before GUI initialization
+- **User Communication**: Clear error messages for clinical users
+- **Recovery Guidance**: Specific instructions for common setup issues
+
+Dependencies Validated:
+----------------------
+- PySide6: Qt6 GUI framework for medical interfaces
+- PyVista: 3D scientific visualization for medical data
+- nibabel: Medical imaging file format support (NIFTI)
+- traits: Observable properties for real-time medical data binding
+- numpy/scipy: Numerical computing for medical image processing
+- yaml: Configuration file management
+
+Usage:
+------
+Run directly from command line:
+```bash
+python launch_pyloc.py
+```
+
+Or from bundled executable:
+```bash
+./voxTool.exe  # Windows
+./voxTool      # Linux/macOS
+```
+
+Author: VoxTool Development Team
+License: See LICENSE.txt
+"""
+
 __author__ = 'iped'
 import os
 import sys
@@ -9,28 +87,30 @@ print(f"Python version: {sys.version}")
 print(f"Working directory: {os.getcwd()}")
 
 # Set PySide6 as the Qt backend before any Qt imports
+# This ensures consistent behavior across different Qt installations
 os.environ['QT_API'] = 'pyside6'
 os.environ.setdefault('ETS_TOOLKIT', 'qt')
-# Set matplotlib backend to use PySide6
+# Set matplotlib backend to use PySide6 for medical imaging compatibility
 os.environ['MPLBACKEND'] = 'QtAgg'
 print("Set Qt backend to PySide6")
 
 # Add the bundled directory to the path if running from PyInstaller
+# This enables proper resource loading in both development and production
 if getattr(sys, 'frozen', False):
-    # Running in a PyInstaller bundle
+    # Running in a PyInstaller bundle (production deployment)
     bundle_dir = sys._MEIPASS
     print(f"Running from PyInstaller bundle: {bundle_dir}")
 else:
-    # Running in a normal Python environment
+    # Running in a normal Python environment (development)
     bundle_dir = os.path.dirname(os.path.abspath(__file__))
     print(f"Running from source: {bundle_dir}")
 
-print("Configuring TraitsUI...")
+print("Configuring TraitsUI for medical imaging workflows...")
 from traits.etsconfig.api import ETSConfig
 ETSConfig.toolkit = 'qt'
 print(f"ETSConfig.toolkit set to: {ETSConfig.toolkit}")
 
-# If linux, set the QT_QPA_PLATFORM environment variable to xcb
+# Configure Linux-specific Qt platform settings for medical workstations
 if os.name == 'posix':
     if 'QT_QPA_PLATFORM' not in os.environ:
         os.environ['QT_QPA_PLATFORM'] = 'xcb'

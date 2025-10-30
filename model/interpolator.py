@@ -1,5 +1,55 @@
 #!/usr/bin/python
 
+"""
+VoxTool Medical Electrode Interpolation Module
+
+This module provides sophisticated mathematical algorithms for interpolating
+electrode contact positions in medical imaging applications. Specialized for
+neurological procedures where precise electrode placement and contact
+localization are critical for patient safety and data quality.
+
+Core Algorithms Overview:
+------------------------
+1. **Linear Interpolation**: 1D electrode strip contact placement
+2. **Grid Interpolation**: 2D electrode grid contact arrangement  
+3. **Surface Optimization**: Iterative contact positioning on brain surfaces
+4. **Geometric Validation**: Spatial consistency checking for electrode arrays
+
+Medical Context:
+---------------
+Electrode interpolation is essential in neurological procedures because:
+- **Not all contacts are visible** in CT scans due to imaging artifacts
+- **Geometric constraints** require mathematically consistent placement
+- **Clinical safety** demands accurate contact localization
+- **Data interpretation** requires precise anatomical mapping
+
+Mathematical Foundations:
+------------------------
+- **Vector Mathematics**: 3D coordinate transformations and projections
+- **Linear Algebra**: Matrix operations for spatial transformations
+- **Optimization Theory**: Iterative refinement for surface constraints
+- **Geometric Algorithms**: Distance calculations and spatial relationships
+
+Key Features:
+------------
+- **Multi-dimensional Support**: 1D strips, 2D grids, arbitrary configurations
+- **Surface Constraints**: Brain surface adherence for grid electrodes
+- **Iterative Refinement**: Optimization-based position correction
+- **Geometric Validation**: Consistency checking across electrode arrays
+- **Medical Coordinate Systems**: Integration with RAS/LAS conventions
+
+Dependencies:
+------------
+- numpy: Numerical computing and array operations
+- math: Mathematical functions and constants
+- scipy (optional): Advanced optimization algorithms
+
+Author: Xavier Islam (islamx@seas.upenn.edu)
+Contributors: VoxTool Development Team
+Copyright: 2016, University of Pennsylvania
+License: See LICENSE.txt
+"""
+
 """ This utility module interpolates all electrode grids in a strip or grid configuration.
 """
 
@@ -24,10 +74,36 @@ import scipy.spatial
 
 
 def normalize(v):
-    """ returns the unit vector in the direction of v
-
-    @param v : Vector (numpy)
-    @rtype numpy array
+    """
+    Calculate unit vector in the direction of input vector.
+    
+    This function is fundamental for electrode interpolation as it ensures
+    consistent spacing between contacts regardless of the distance between
+    reference points. Essential for maintaining uniform electrode geometry.
+    
+    Parameters:
+    -----------
+    v : numpy.ndarray
+        Input vector of any dimension (typically 3D for medical coordinates)
+        
+    Returns:
+    --------
+    numpy.ndarray
+        Unit vector pointing in the same direction as input vector
+        Returns zero vector if input has zero magnitude
+        
+    Mathematical Notes:
+    ------------------
+    Unit vector = v / ||v|| where ||v|| is the Euclidean norm
+    Used extensively in electrode trajectory calculations to maintain
+    consistent inter-contact distances.
+    
+    Medical Applications:
+    -------------------
+    - Electrode trajectory direction calculation
+    - Contact spacing normalization
+    - Surface normal computation for grid electrodes
+    - Geometric constraint enforcement
     """
 
     norm = np.linalg.norm(v)
@@ -37,7 +113,24 @@ def normalize(v):
 
 
 def totuple(a):
-    """ returns numpy arrays as tuples
+    """
+    Convert numpy arrays to tuples for compatibility with legacy interfaces.
+    
+    Parameters:
+    -----------
+    a : numpy.ndarray or other
+        Array to convert to tuple format
+        
+    Returns:
+    --------
+    tuple
+        Tuple representation of input array
+        Returns input unchanged if not array-like
+        
+    Notes:
+    ------
+    This utility function ensures compatibility between numpy-based
+    mathematical operations and tuple-based legacy medical imaging APIs.
     """
 
     try:

@@ -1,3 +1,53 @@
+"""
+VoxTool Medical Imaging Data Model Module
+
+This module provides the core data structures and algorithms for medical imaging analysis,
+specifically focused on electrode localization in CT scans and MRI overlay visualization
+for neurological applications.
+
+Core Components Overview:
+------------------------
+1. **Scan**: Base class for medical imaging data
+2. **PointCloud**: 3D coordinate management with Traits integration
+3. **PointMask**: Spatial region selection and masking operations
+4. **Contact**: Individual electrode contact representation
+5. **MicroContact**: Sub-millimeter electrode contacts (interpolated)
+6. **Lead**: Electrode lead assembly with multiple contacts
+7. **CT**: Complete CT scan management with electrode localization
+8. **MRI**: MRI scan management with T1 overlay capabilities
+
+Medical Imaging Workflow:
+------------------------
+1. Load CT scan data using nibabel for NIFTI file support
+2. Apply intensity thresholding to identify high-density structures (electrodes)
+3. Create point clouds from thresholded voxels
+4. Enable manual and automatic electrode contact identification
+5. Support electrode lead interpolation for missing contacts
+6. Provide coordinate system transformations (RAS/LAS for radiological viewing)
+7. Export electrode coordinates in multiple formats (JSON, VOX_MOM)
+
+Key Features:
+------------
+- **Multi-format Support**: NIFTI, JSON, VOX_MOM file formats
+- **Coordinate Systems**: RAS (Right-Anterior-Superior) and LAS (Left-Anterior-Superior)
+- **Electrode Types**: Depth electrodes, grid electrodes, strip electrodes
+- **Interpolation**: Automatic contact placement using geometric algorithms
+- **Spatial Masking**: Region-based selection and proximity operations
+- **MRI Integration**: T1 overlay with volume rendering capabilities
+
+Dependencies:
+------------
+- nibabel: Medical imaging file I/O (NIFTI format)
+- numpy: Numerical computing and array operations
+- traits: Observable properties and GUI integration
+- scipy: Scientific computing (image processing)
+- json: Data serialization
+- logging: Diagnostic output
+
+Author: VoxTool Development Team
+License: See LICENSE.txt
+"""
+
 import nibabel as nib
 import numpy as np
 from traits.api import HasTraits , CArray, Instance,on_trait_change
@@ -13,10 +63,38 @@ log = logging.getLogger()
 
 
 class PylocModelException(Exception):
+    """
+    Custom exception class for VoxTool medical imaging operations.
+    
+    Raised when:
+    - Invalid medical imaging data is encountered
+    - Coordinate system transformations fail
+    - Electrode localization operations are invalid
+    - File format operations encounter errors
+    """
     pass
 
 
 class Scan(object):
+    """
+    Base class for medical imaging scan data.
+    
+    Provides fundamental structure for medical imaging files with support for:
+    - Filename tracking
+    - 3D image data storage
+    - Brain mask overlays for region-specific analysis
+    
+    This class serves as a foundation for more specialized scan types (CT, MRI).
+    
+    Attributes:
+    -----------
+    filename : str or None
+        Path to the source medical imaging file
+    data : numpy.ndarray or None
+        3D image data array loaded from the medical imaging file
+    brainmask : numpy.ndarray or None
+        Binary mask defining brain regions for analysis
+    """
     def __init__(self):
         self.filename = None
         self.data = None
@@ -24,25 +102,120 @@ class Scan(object):
 
 
 class PointCloud(HasTraits):
+    """
+    3D point cloud management with Traits observable properties.
+    
+    This class manages collections of 3D coordinates representing points in medical
+    imaging space, typically derived from thresholded CT scan voxels that correspond
+    to high-density structures like electrode contacts.
+    
+    Key Features:
+    ------------
+    - **Traits Integration**: Observable properties for GUI updates
+    - **Numpy Array Storage**: Efficient 3D coordinate management
+    - **Coordinate Operations**: Center calculation, clearing, masking
+    - **Medical Context**: Designed for electrode contact localization
+    
+    Attributes:
+    -----------
+    coordinates : CArray (Traits)
+        Nx3 numpy array of [x, y, z] coordinates in image voxel space
+        
+    Usage Example:
+    -------------
+    ```python
+    # Create point cloud from electrode contact coordinates
+    contact_coords = np.array([[100, 120, 80], [102, 121, 82], [104, 122, 84]])
+    cloud = PointCloud(contact_coords)
+    
+    # Get center point for electrode tip localization
+    center = cloud.center()  # Returns centroid of all points
+    
+    # Clear all points (e.g., for new scan)
+    cloud.clear()
+    ```
+    """
     coordinates = CArray
 
     def __init__(self, coordinates):
+        """
+        Initialize point cloud with 3D coordinates.
+        
+        Parameters:
+        -----------
+        coordinates : array-like
+            Nx3 array of [x, y, z] coordinates in image voxel space
+        """
         super(PointCloud, self).__init__()
         self.coordinates = np.array(coordinates)
 
     def __len__(self):
+        """
+        Return number of points in the cloud.
+        
+        Returns:
+        --------
+        int
+            Number of 3D points stored in the cloud
+        """
         return len(self.coordinates)
 
     def center(self):
+        """
+        Calculate centroid of all points in the cloud.
+        
+        Returns:
+        --------
+        numpy.ndarray
+            [x, y, z] coordinates of the geometric center
+            
+        Notes:
+        ------
+        This is particularly useful for finding the center of electrode
+        contact clusters for lead trajectory analysis.
+        """
         return self.coordinates.mean(0)
 
     def clear(self):
+        """
+        Remove all points from the cloud.
+        
+        Creates an empty 3x0 array to maintain proper shape for
+        subsequent coordinate operations.
+        """
         self.coordinates = np.array([[], [], []]).T
 
     def set_coordinates(self, coordinates):
+        """
+        Replace all coordinates with new set.
+        
+        Parameters:
+        -----------
+        coordinates : array-like
+            Nx3 array of new [x, y, z] coordinates
+        """
         self.coordinates = np.array(coordinates)
 
     def get_coordinates(self, mask=None):
+        """
+        Get coordinates, optionally filtered by a boolean mask.
+        
+        Parameters:
+        -----------
+        mask : numpy.ndarray or None
+            Boolean array to filter coordinates (same length as point count)
+            If None, returns all coordinates
+            
+        Returns:
+        --------
+        numpy.ndarray
+            Filtered Nx3 array of [x, y, z] coordinates
+            
+        Notes:
+        ------
+        Masking is commonly used to select specific electrode contacts
+        or regions of interest within the point cloud.
+        """
         if mask is None:
             return self.coordinates
         else:
@@ -50,10 +223,55 @@ class PointCloud(HasTraits):
 
 
 class PointMask(HasTraits):
+    """
+    Spatial region selection and masking operations for point clouds.
+    
+    This class provides sophisticated spatial selection capabilities for medical
+    imaging applications, particularly for electrode contact localization and
+    region-of-interest analysis. It combines boolean masking with spatial
+    bounds checking for efficient 3D operations.
+    
+    Key Features:
+    ------------
+    - **Boolean Masking**: Efficient numpy-based point selection
+    - **Spatial Bounds**: Automatic bounding box calculation and containment testing
+    - **Proximity Operations**: Distance-based point selection
+    - **Mask Combination**: Union and intersection operations between masks
+    - **Traits Integration**: Observable properties for real-time GUI updates
+    
+    Medical Applications:
+    -------------------
+    - Electrode contact region definition
+    - Brain region segmentation
+    - Distance-based contact clustering
+    - Lead trajectory analysis
+    
+    Attributes:
+    -----------
+    point_cloud : Instance(PointCloud)
+        Reference to the point cloud being masked
+    mask : numpy.ndarray
+        Boolean array indicating selected points
+    label : str
+        Human-readable identifier for this mask
+    """
 
     point_cloud = Instance(PointCloud)
 
     def __init__(self, label, point_cloud, mask=None):
+        """
+        Initialize point mask with spatial selection criteria.
+        
+        Parameters:
+        -----------
+        label : str
+            Descriptive name for this mask (e.g., "contact_1", "electrode_tip")
+        point_cloud : PointCloud
+            Point cloud to apply masking operations to
+        mask : numpy.ndarray or None
+            Boolean array of same length as point cloud
+            If None, creates empty mask (all False)
+        """
         super(PointMask, self).__init__()
         self.label = label
         self._bounds = None
@@ -64,21 +282,73 @@ class PointMask(HasTraits):
         self._bounds = self._calculate_bounds()
 
     def copy(self):
+        """
+        Create deep copy of this point mask.
+        
+        Returns:
+        --------
+        PointMask
+            New instance with identical selection criteria
+        """
         return PointMask(self.label, self.point_cloud, self.mask.copy())
 
     def clear(self):
+        """
+        Deselect all points in the mask.
+        
+        Sets all mask values to False, effectively clearing the selection.
+        """
         self.mask = np.zeros(len(self.point_cloud), bool)
 
     def add_points(self, coordinates):
+        """
+        Add specific coordinate points to the mask.
+        
+        Parameters:
+        -----------
+        coordinates : array-like
+            List or array of [x, y, z] coordinates to include in mask
+            
+        Notes:
+        ------
+        This method finds points in the cloud that match the given coordinates
+        and sets their mask values to True. Useful for manual point selection.
+        """
         all_coordinates = self.point_cloud.get_coordinates()
         for coordinate in coordinates:
             self.mask[all_coordinates == coordinate] = True
 
     def add_mask(self, point_mask):
+        """
+        Combine this mask with another using logical OR operation.
+        
+        Parameters:
+        -----------
+        point_mask : PointMask
+            Another point mask to union with this one
+            
+        Notes:
+        ------
+        Updates bounds automatically after mask combination.
+        Useful for combining multiple electrode contact regions.
+        """
         self.mask = np.logical_or(self.mask, point_mask.mask)
         self._bounds = self._calculate_bounds()
 
     def remove_mask(self, point_mask):
+        """
+        Remove points defined by another mask using logical AND NOT operation.
+        
+        Parameters:
+        -----------
+        point_mask : PointMask
+            Point mask defining points to remove from this mask
+            
+        Notes:
+        ------
+        Updates bounds automatically after mask modification.
+        Logs the number of points removed for debugging purposes.
+        """
         to_keep = np.logical_not(point_mask.mask)
 
         before = np.count_nonzero(self.mask)
@@ -89,13 +359,33 @@ class PointMask(HasTraits):
         self._bounds = self._calculate_bounds()
 
     def coordinates(self):
+        """
+        Get 3D coordinates of all selected points.
+        
+        Returns:
+        --------
+        numpy.ndarray
+            Nx3 array of [x, y, z] coordinates for masked points
+            
+        Notes:
+        ------
+        This is the primary method for extracting spatial coordinates
+        of selected electrode contacts or regions of interest.
+        """
         return self.point_cloud.get_coordinates(self.mask)
 
     @on_trait_change('point_cloud.coordinates')
     def update_mask(self):
         """
-        Mask the same area on a new set of coordinates
-        :return:
+        Update mask when underlying point cloud coordinates change.
+        
+        This method automatically re-applies spatial bounds checking
+        when the point cloud is modified, ensuring mask consistency.
+        
+        Notes:
+        ------
+        Called automatically via Traits when point cloud coordinates change.
+        Maintains spatial region selection across coordinate transformations.
         """
         if self._bounds is not None:
             new_mask = self.__contains__(self.point_cloud.coordinates)
@@ -103,6 +393,26 @@ class PointMask(HasTraits):
 
     @staticmethod
     def combined(point_masks):
+        """
+        Combine multiple point masks into unified coordinate and label arrays.
+        
+        Parameters:
+        -----------
+        point_masks : list of PointMask
+            Point masks to combine (e.g., all contacts from multiple electrodes)
+            
+        Returns:
+        --------
+        tuple : (coordinates, labels)
+            coordinates : numpy.ndarray - Nx3 array of unique [x, y, z] points
+            labels : list - Corresponding string labels for each coordinate
+            
+        Notes:
+        ------
+        This method ensures no duplicate coordinates are included and is
+        particularly useful for generating combined visualizations of
+        multiple electrode contacts or regions.
+        """
         indices = np.array([])
         coords = np.array([[], [], []]).T
         labels = []
@@ -117,6 +427,20 @@ class PointMask(HasTraits):
         return coords, labels
 
     def _calculate_bounds(self):
+        """
+        Calculate 3D bounding box for all selected points.
+        
+        Returns:
+        --------
+        numpy.ndarray
+            2x3 array: [[min_x, min_y, min_z], [max_x, max_y, max_z]]
+            Returns zero bounds if no points are selected
+            
+        Notes:
+        ------
+        Bounding boxes are used for efficient spatial containment testing
+        and visualization extent calculation.
+        """
         if len(self.point_cloud) == 0 or not self.mask.any():
             return np.array([[0, 0, 0], [0, 0, 0]])
         coords = self.coordinates()
@@ -125,9 +449,36 @@ class PointMask(HasTraits):
 
     @property
     def bounds(self):
+        """
+        Get current 3D bounding box of selected points.
+        
+        Returns:
+        --------
+        numpy.ndarray
+            2x3 bounding box array or None if not calculated
+        """
         return self._bounds
 
     def __contains__(self, coordinate):
+        """
+        Test if coordinate(s) fall within this mask's spatial bounds.
+        
+        Parameters:
+        -----------
+        coordinate : array-like
+            Single [x, y, z] coordinate or Nx3 array of coordinates
+            
+        Returns:
+        --------
+        bool or numpy.ndarray
+            True if coordinate is within bounds (with 1.5 voxel tolerance)
+            Array of boolean values for multiple coordinates
+            
+        Notes:
+        ------
+        Uses 1.5 voxel tolerance to account for sub-voxel electrode positioning
+        and numerical precision in medical imaging coordinates.
+        """
         lower =  ((coordinate - self.bounds[0, :]) > -1.5)
         upper  = ((coordinate - self.bounds[1, :]) < 1.5)
         if lower.squeeze().shape==(3,) and upper.squeeze().shape==(3,):
@@ -137,12 +488,57 @@ class PointMask(HasTraits):
 
     @staticmethod
     def proximity_mask(point_cloud, point, distance):
+        """
+        Create mask for points within specified distance of target point.
+        
+        Parameters:
+        -----------
+        point_cloud : PointCloud
+            Point cloud to search within
+        point : array-like
+            Target [x, y, z] coordinate
+        distance : float
+            Maximum distance for inclusion (in voxel units)
+            
+        Returns:
+        --------
+        PointMask
+            New mask containing points within distance threshold
+            
+        Notes:
+        ------
+        Uses Euclidean distance calculation. Commonly used for electrode
+        contact detection with typical distances of 2-5 voxels.
+        """
         vector_dist = point_cloud.get_coordinates() - point
         dists = np.sqrt(np.sum(np.square(vector_dist), 1))
         return PointMask('_proximity', point_cloud, dists < distance)
 
     @staticmethod
     def centered_proximity_mask(point_cloud, point, distance):
+        """
+        Create proximity mask with iterative centroid refinement.
+        
+        Parameters:
+        -----------
+        point_cloud : PointCloud
+            Point cloud to search within
+        point : array-like
+            Initial target [x, y, z] coordinate
+        distance : float
+            Maximum distance for inclusion (in voxel units)
+            
+        Returns:
+        --------
+        PointMask
+            Mask centered on refined centroid of nearby points
+            
+        Notes:
+        ------
+        Performs 4 iterations of centroid refinement to improve electrode
+        contact center localization. More robust than simple proximity
+        for irregularly shaped electrode artifacts in CT scans.
+        """
         coordinates = point_cloud.get_coordinates()
 
         attempts = 0
@@ -155,6 +551,19 @@ class PointMask(HasTraits):
         return PointMask('_proximity', point_cloud, dists < distance)
 
     def get_center(self):
+        """
+        Calculate centroid of all selected points.
+        
+        Returns:
+        --------
+        numpy.ndarray
+            [x, y, z] coordinates of geometric center
+            
+        Notes:
+        ------
+        Centroid calculation is fundamental for electrode contact localization
+        and lead trajectory analysis. Provides sub-voxel precision.
+        """
         return np.mean(self.coordinates(), 0)
 
 

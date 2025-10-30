@@ -1,3 +1,61 @@
+"""
+VoxTool Medical Imaging Application Controller Module
+
+This module provides the main application controller and GUI framework for VoxTool,
+a specialized medical imaging application for electrode localization in neurological
+procedures. Integrates CT scan analysis, MRI overlays, and 3D visualization for
+comprehensive electrode contact identification workflows.
+
+Core Components Overview:
+------------------------
+1. **PylocControl**: Main application controller and workflow orchestrator
+2. **PylocWidget**: Primary GUI container with integrated viewers
+3. **ContactPanelWidget**: Electrode contact definition and labeling interface
+4. **LeadDefinitionWidget**: Electrode lead specification and configuration
+5. **CloudViewer**: 3D point cloud visualization with PyVista integration
+6. **AxisView**: Anatomical orientation and coordinate system management
+
+Medical Workflow Integration:
+----------------------------
+This application supports the complete electrode localization pipeline:
+
+1. **CT Scan Loading**: NIFTI file import with intensity thresholding
+2. **Point Cloud Generation**: High-density voxel identification for electrodes
+3. **Manual Contact Selection**: Interactive 3D point picking for electrode tips
+4. **Automatic Interpolation**: Mathematical lead trajectory calculation
+5. **MRI Overlay**: T1-weighted image overlay for anatomical context
+6. **Coordinate Export**: Multiple format export (JSON, VOX_MOM) for analysis
+
+Key Features:
+------------
+- **Multi-Modal Imaging**: CT primary analysis with MRI overlay support
+- **3D Visualization**: PyVista-based point cloud and volume rendering
+- **Slice Navigation**: Orthogonal 2D slice views for precise localization
+- **Coordinate Systems**: RAS/LAS support for radiological perspectives
+- **Real-time Updates**: Synchronized updates across all visualization components
+- **Medical Standards**: NIFTI format support and medical coordinate conventions
+
+Technical Architecture:
+----------------------
+- **Qt6 Integration**: PySide6-based GUI with system theme support
+- **Traits Framework**: Observable properties for real-time data binding
+- **Numpy/Scipy**: Efficient numerical computing for medical image processing
+- **PyVista/VTK**: Advanced 3D visualization and volume rendering
+- **Matplotlib**: 2D slice visualization with medical imaging optimizations
+
+Dependencies:
+------------
+- PySide6: Modern Qt6 GUI framework
+- PyVista: 3D scientific visualization
+- nibabel: Medical imaging file I/O
+- numpy/scipy: Numerical computing
+- traits/traitsui: Observable properties and GUI binding
+- yaml: Configuration file management
+
+Author: VoxTool Development Team
+License: See LICENSE.txt
+"""
+
 print("pyloc: Starting imports...")
 
 import os
@@ -77,6 +135,26 @@ print("pyloc: logging setup OK")
 
 print("pyloc: defining utility functions...")
 def add_labeled_widget(layout, label, *widgets):
+    """
+    Utility function to add labeled widgets to Qt layouts.
+    
+    Creates a horizontal layout containing a label followed by one or more widgets.
+    Commonly used throughout the medical imaging interface for consistent labeling.
+    
+    Parameters:
+    -----------
+    layout : QLayout
+        Parent layout to add the labeled widget group to
+    label : str
+        Text label to display before the widgets
+    *widgets : QWidget
+        Variable number of widgets to add after the label
+        
+    Notes:
+    ------
+    This utility ensures consistent spacing and alignment across the medical
+    imaging interface, particularly useful for electrode parameter controls.
+    """
     sub_layout = QHBoxLayout()
     label_widget = QLabel(label)
     sub_layout.addWidget(label_widget)
@@ -89,11 +167,73 @@ print("pyloc: utility functions OK")
 print("pyloc: defining PylocControl class...")
 class PylocControl(object):
     """
-    Main class for running VoxTool.
+    Main application controller for VoxTool medical imaging system.
+    
+    This class serves as the central orchestrator for the electrode localization
+    workflow, managing all aspects of the medical imaging pipeline from CT scan
+    loading through electrode contact identification and coordinate export.
+    
+    Core Responsibilities:
+    ---------------------
+    1. **Application Lifecycle**: Qt application setup and event loop management
+    2. **Medical Data Management**: CT scan loading, thresholding, and point cloud generation
+    3. **User Interface Coordination**: Synchronization between 2D/3D viewers and control panels
+    4. **Workflow Orchestration**: Lead definition, contact selection, and interpolation
+    5. **Data Persistence**: Autosave functionality and coordinate export
+    6. **MRI Integration**: T1 overlay loading and opacity control
+    
+    Medical Workflow Pipeline:
+    -------------------------
+    1. **CT Loading**: Load NIFTI CT scan with intensity thresholding
+    2. **Lead Definition**: Specify electrode types and spatial configurations
+    3. **Contact Selection**: Interactive 3D point picking for electrode contacts
+    4. **Interpolation**: Automatic calculation of missing contact positions
+    5. **Validation**: Cross-reference with 2D slice views for accuracy
+    6. **Export**: Generate coordinate files for downstream analysis
+    
+    Key Features:
+    ------------
+    - **Real-time Autosave**: Automatic state preservation every 30 seconds
+    - **Multi-modal Imaging**: CT primary with optional MRI overlay
+    - **Coordinate Systems**: RAS/LAS transformation support
+    - **Interactive Selection**: 3D point picking with adaptive radius
+    - **Lead Interpolation**: Geometric algorithms for missing contacts
+    - **Export Formats**: JSON and VOX_MOM coordinate file generation
+    
+    Attributes:
+    -----------
+    app : QApplication
+        Main Qt application instance
+    view : PylocWidget
+        Primary GUI widget containing all visualization components
+    window : QMainWindow
+        Main application window container
+    ct : CT or None
+        Current CT scan data and associated electrode information
+    mri : MRI or None
+        Optional MRI scan for anatomical overlay
+    selected_lead : Lead or None
+        Currently selected electrode lead for contact operations
+    config : dict
+        Configuration parameters for electrode types and system settings
     """
     AUTOSAVE_FILE = "voxTool_autosave.json"
     
     def __init__(self, config=None):
+        """
+        Initialize the VoxTool medical imaging application.
+        
+        Parameters:
+        -----------
+        config : dict or None
+            Configuration dictionary containing electrode specifications,
+            file paths, and system settings. If None, loads from config.yml
+            
+        Notes:
+        ------
+        Sets up the complete Qt application environment, creates the main
+        GUI interface, and initializes the medical imaging workflow system.
+        """
         log.debug("Initializing PylocControl")
         if config == None:
             config = yaml.load(open("../model/config.yml"), Loader=yaml.SafeLoader)
@@ -109,6 +249,7 @@ class PylocControl(object):
         else:
             log.debug("Using existing QApplication")
             
+        # Initialize main GUI components
         self.view = PylocWidget(self, config) #: The base object for the GUI
         log.debug("View created")
         self.view.show()
