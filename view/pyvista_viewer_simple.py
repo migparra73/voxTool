@@ -276,7 +276,10 @@ class SimplePyVistaScene(QWidget):
             render_kwargs['render_points_as_spheres'] = True
             
             if colors is not None:
-                if 'colors' in point_cloud.array_names:
+                if 'RGB' in point_cloud.array_names:
+                    render_kwargs['scalars'] = 'RGB'
+                    render_kwargs['rgb'] = True
+                elif 'colors' in point_cloud.array_names:
                     render_kwargs['scalars'] = 'colors'
                     render_kwargs['rgb'] = True
                 elif 'scalars' in point_cloud.array_names:
@@ -318,7 +321,107 @@ class SimplePyVistaScene(QWidget):
         except Exception as e:
             log.debug(f"SimplePyVistaScene: Error removing {name}: {e}")
             
+    def add_mri_overlay(self, mri_mesh, name="mri_overlay", opacity=0.5, **kwargs):
+        """Add MRI overlay mesh to the scene - supports both surface and volume rendering"""
+        try:
+            if self._plotter is None:
+                if hasattr(self, 'placeholder'):
+                    self.placeholder.setText(f"PyVista 3D Scene\n{name}: MRI overlay\nOpacity: {opacity}")
+                return f"fallback_{name}"
+            
+            if mri_mesh is None:
+                log.warning("SimplePyVistaScene: No MRI mesh provided")
+                return None
+            
+            # Check if this is a volume (ImageData) or surface mesh
+            import pyvista as pv
+            is_volume = isinstance(mri_mesh, pv.ImageData)
+            
+            # Set up rendering properties for overlay
+            render_kwargs = kwargs.copy()
+            render_kwargs['opacity'] = opacity
+            render_kwargs['pickable'] = False  # Make non-interactive (click-through)
+            
+            if is_volume:
+                # Volume rendering for ImageData
+                log.debug(f"SimplePyVistaScene: Volume rendering MRI data")
+                render_kwargs['scalars'] = 'values'
+                render_kwargs['cmap'] = render_kwargs.get('cmap', 'gray')
+                render_kwargs['show_scalar_bar'] = False
+                # Use volume rendering which should show 3D structure better
+                actor = self._plotter.add_volume(mri_mesh, name=name, **render_kwargs)
+            else:
+                # Surface rendering for PolyData/UnstructuredGrid
+                log.debug(f"SimplePyVistaScene: Surface rendering MRI mesh")
+                render_kwargs['color'] = render_kwargs.get('color', 'gray')
+                render_kwargs['show_edges'] = render_kwargs.get('show_edges', False)
+                actor = self._plotter.add_mesh(mri_mesh, name=name, **render_kwargs)
+            
+            self.meshes[name] = mri_mesh
+            self.actors[name] = actor
+            
+            log.debug(f"SimplePyVistaScene: Added MRI overlay {name} with opacity {opacity} ({'volume' if is_volume else 'surface'} rendering)")
+            
+            # Force render
+            try:
+                self._plotter.render()
+            except Exception:
+                pass
+                
+            return actor
+            
+        except Exception as e:
+            log.error(f"SimplePyVistaScene: Error adding MRI overlay {name}: {e}")
+            return None
+    
+    def update_mri_opacity(self, name, opacity):
+        """Update opacity of MRI overlay"""
+        try:
+            if self._plotter and name in self.actors:
+                actor = self.actors[name]
+                
+                # Check if this is a volume actor (has GetProperty with GetScalarOpacity)
+                if hasattr(actor, 'GetProperty'):
+                    prop = actor.GetProperty()
+                    if hasattr(prop, 'GetScalarOpacity'):
+                        # This is a volume - use scalar opacity transfer function
+                        import vtk
+                        opacity_func = vtk.vtkPiecewiseFunction()
+                        opacity_func.AddPoint(0.0, 0.0)  # Minimum value transparent
+                        opacity_func.AddPoint(0.1, opacity)  # Low values with specified opacity
+                        opacity_func.AddPoint(1.0, opacity)  # Maximum value with specified opacity
+                        prop.SetScalarOpacity(opacity_func)
+                        log.debug(f"SimplePyVistaScene: Updated volume {name} opacity to {opacity} using transfer function")
+                    else:
+                        # This is a surface mesh - use regular opacity
+                        prop.SetOpacity(opacity)
+                        log.debug(f"SimplePyVistaScene: Updated surface {name} opacity to {opacity}")
+                    
+                    try:
+                        self._plotter.render()
+                    except Exception:
+                        pass
+                else:
+                    log.warning(f"SimplePyVistaScene: Actor {name} has no opacity property")
+            else:
+                log.warning(f"SimplePyVistaScene: Actor {name} not found for opacity update")
+        except Exception as e:
+            log.error(f"SimplePyVistaScene: Error updating opacity for {name}: {e}")
+            
+    def remove_point_cloud(self, name):
+        """Remove a point cloud from the scene"""
+        try:
+            if self._plotter and name in self.actors:
+                self._plotter.remove_actor(self.actors[name])
+                del self.actors[name]
+            if name in self.meshes:
+                del self.meshes[name]
+        except Exception as e:
+            log.debug(f"SimplePyVistaScene: Error removing {name}: {e}")
+            
     def add_arrows(self, start_points, vectors, colors=None, name="arrows", **kwargs):
+        """Add arrows to the scene"""
+        return self.add_point_cloud(start_points, colors, name, **kwargs)
         """Add arrows to the scene"""
         return self.add_point_cloud(start_points, colors, name, **kwargs)
         
@@ -326,11 +429,49 @@ class SimplePyVistaScene(QWidget):
         """Add text to the scene"""
         try:
             if self._plotter and hasattr(self._plotter, 'add_text'):
-                actor = self._plotter.add_text(text, position=position, **kwargs)
-                self.actors[name] = actor
+                log.debug(f"SimplePyVistaScene: Adding text '{text}' at position {position}")
+                # Check if position is relative (2D screen) or world coordinates (3D)
+                if len(position) == 2 and all(0 <= p <= 1 for p in position):
+                    # Relative positioning for 2D screen text
+                    log.debug(f"SimplePyVistaScene: Using 2D screen positioning for '{text}'")
+                    # Default font size for 2D text
+                    if 'font_size' not in kwargs:
+                        kwargs['font_size'] = 12
+                    actor = self._plotter.add_text(text, position=position, **kwargs)
+                elif len(position) == 3:
+                    # World coordinates for 3D floating text
+                    log.debug(f"SimplePyVistaScene: Using 3D world coordinates for '{text}' at {position}")
+                    # Default larger font size for 3D labels
+                    if 'font_size' not in kwargs:
+                        kwargs['font_size'] = 20
+                    
+                    # Filter out parameters not supported by add_point_labels
+                    label_kwargs = {}
+                    supported_params = ['font_size', 'font_family', 'show_points', 'point_size', 'shape_color', 'point_color', 'render_points_as_spheres']
+                    for key, value in kwargs.items():
+                        if key in supported_params:
+                            label_kwargs[key] = value
+                    
+                    # Handle color parameter - convert to shape_color for labels
+                    if 'color' in kwargs:
+                        label_kwargs['shape_color'] = kwargs['color']
+                        
+                    actor = self._plotter.add_point_labels([position], [text], **label_kwargs)
+                else:
+                    # Default to 2D screen text
+                    log.debug(f"SimplePyVistaScene: Defaulting to 2D screen positioning for '{text}'")
+                    if 'font_size' not in kwargs:
+                        kwargs['font_size'] = 12
+                    actor = self._plotter.add_text(text, position=position, **kwargs)
+                    
+                if actor is not None:
+                    self.actors[name] = actor
+                    log.debug(f"SimplePyVistaScene: Successfully added text '{name}' with actor: {actor}")
+                else:
+                    log.warning(f"SimplePyVistaScene: Failed to create text actor for '{name}'")
                 return actor
-        except Exception:
-            pass
+        except Exception as e:
+            log.error(f"SimplePyVistaScene: Failed to add text '{name}': {e}")
         return None
         
     def remove_text(self, name):

@@ -322,6 +322,7 @@ class PylocControl(object):
             self.view.task_bar.load_coord_button.setEnabled(True)
             self.view.task_bar.load_gridmap_file.setEnabled(True)
             self.view.task_bar.switch_coordinate_system.setEnabled(True)
+            self.view.task_bar.load_mri_button.setEnabled(True)  # Enable MRI loading after CT is loaded
 
 
     def load_ct(self, filename):
@@ -635,56 +636,65 @@ class PylocControl(object):
     def prompt_for_mri(self):
         """Handler for Load MRI button"""
         log.debug("Prompting for MRI")
-        mri_dir = QFileDialog().getExistingDirectory(None, 'Select Freesurfer MRI Directory')
+        filename, _ = QFileDialog.getOpenFileName(
+            None, 
+            'Select T1 MRI File', 
+            '', 
+            'NIfTI files (*.nii *.nii.gz);;MGZ files (*.mgz);;All files (*.*)'
+        )
         
-        if mri_dir:
-            aparc_file = os.path.join(mri_dir, 'mri/aparc+aseg.mgz')
-            if os.path.exists(aparc_file):
-                self.load_mri(aparc_file)
-            else:
-                QMessageBox.warning(None, 'Error', 
-                    'Could not find aparc+aseg.mgz in selected directory')
+        if filename:
+            self.load_mri(filename)
                 
     def load_mri(self, filename):
-        """Load MRI data and display"""
+        """Load MRI data and display as overlay"""
         try:
-            import nibabel as nib
-            self.mri_filename = filename
-            self.mri = nib.load(filename)
+            from model.scan import MRI
             
-            # Register MRI to CT space
-            # This would require implementation of registration logic
-            registered_mri = self.register_to_ct(self.mri)
+            log.debug(f"Loading MRI from {filename}")
             
-            # Add MRI visualization
-            self.view.add_cloud(registered_mri, '_mri')
+            # Create MRI object and load data
+            self.mri = MRI(self.config)
+            if not self.mri.load_scan(filename):
+                QMessageBox.warning(None, 'Error', 'Failed to load MRI file')
+                return
+                
+            # Generate surface mesh for overlay
+            surface_mesh = self.mri.get_surface_mesh(threshold=0.1)
+            if surface_mesh is None:
+                QMessageBox.warning(None, 'Error', 'Failed to generate MRI surface mesh')
+                return
+            
+            # Add MRI overlay to 3D scene
+            self.view.add_mri_overlay(surface_mesh)
             
             # Enable opacity slider
             self.view.task_bar.mri_opacity.setEnabled(True)
+            self.view.task_bar.load_mri_button.setEnabled(True)  # Keep enabled for reloading
             
-            log.debug(f"Loaded MRI from {filename}")
+            log.info(f"Successfully loaded MRI overlay from {filename}")
             
         except Exception as e:
             log.error(f"Failed to load MRI: {str(e)}")
+            import traceback
+            log.error(f"MRI loading traceback: {traceback.format_exc()}")
             QMessageBox.warning(None, 'Error', f'Failed to load MRI: {str(e)}')
             
-    def register_to_ct(self, mri_img):
-        """
-        Register MRI to CT space using transformation matrices
-        This is a placeholder - actual implementation would need proper registration
-        """
-        # Implementation needed for:
-        # 1. Extract transformation matrices from CT and MRI
-        # 2. Compute registration transform
-        # 3. Apply transform to MRI data
-        # 4. Return registered data
-        pass
-
     def update_mri_opacity(self, value):
         """Update MRI visualization opacity"""
-        if '_mri' in self.view.cloud_widget.viewer.clouds:
-            opacity = value / 100.0
-            self.view.cloud_widget.viewer.clouds['_mri'].set_opacity(opacity)
+        try:
+            if hasattr(self, 'mri'):
+                opacity = value / 100.0
+                self.mri.set_opacity(opacity)
+                
+                # Update the opacity in the 3D scene
+                self.view.update_mri_opacity(opacity)
+                
+                log.debug(f"Updated MRI opacity to {opacity}")
+            else:
+                log.warning("No MRI loaded for opacity update")
+        except Exception as e:
+            log.error(f"Failed to update MRI opacity: {e}")
 
 
 class PylocWidget(QWidget):
@@ -737,6 +747,22 @@ class PylocWidget(QWidget):
     def add_cloud(self, ct, label, callback=None):
         log.debug("PylocWidget.add_cloud: Adding cloud {} to view".format(label))
         self.cloud_widget.add_cloud(ct, label, callback)
+
+    def add_mri_overlay(self, mesh, name="mri_overlay", opacity=0.5):
+        """Add MRI overlay to the 3D scene"""
+        log.debug(f"PylocWidget.add_mri_overlay: Adding MRI overlay {name}")
+        if hasattr(self.cloud_widget, 'add_mri_overlay'):
+            self.cloud_widget.add_mri_overlay(mesh, name, opacity)
+        else:
+            log.warning("Cloud widget does not support MRI overlay")
+    
+    def update_mri_opacity(self, opacity, name="mri_overlay"):
+        """Update MRI overlay opacity"""
+        log.debug(f"PylocWidget.update_mri_opacity: Updating {name} opacity to {opacity}")
+        if hasattr(self.cloud_widget, 'update_mri_opacity'):
+            self.cloud_widget.update_mri_opacity(name, opacity)
+        else:
+            log.warning("Cloud widget does not support MRI opacity update")
 
     def add_RAS(self,ct,callback=None):
         self.cloud_widget.add_RAS(ct,callback)
@@ -1279,6 +1305,22 @@ class CloudWidget(QWidget):
     def add_cloud(self, ct, label, callback=None):
         log.debug("CloudWidget.add_cloud: Adding cloud {} to view".format(label))
         self.viewer.add_cloud(ct, label, callback)
+        
+    def add_mri_overlay(self, mesh, name="mri_overlay", opacity=0.5):
+        """Add MRI overlay to the cloud viewer"""
+        log.debug(f"CloudWidget.add_mri_overlay: Adding MRI overlay {name}")
+        if hasattr(self.viewer, 'scene') and hasattr(self.viewer.scene, 'scene'):
+            self.viewer.scene.scene.add_mri_overlay(mesh, name, opacity)
+        else:
+            log.warning("CloudWidget: No scene available for MRI overlay")
+    
+    def update_mri_opacity(self, name, opacity):
+        """Update MRI overlay opacity in the cloud viewer"""
+        log.debug(f"CloudWidget.update_mri_opacity: Updating {name} opacity to {opacity}")
+        if hasattr(self.viewer, 'scene') and hasattr(self.viewer.scene, 'scene'):
+            self.viewer.scene.scene.update_mri_opacity(name, opacity)
+        else:
+            log.warning("CloudWidget: No scene available for MRI opacity update")
 
     def add_RAS(self,ct,callback=None):
         self.viewer.add_RAS(ct,callback)
@@ -1554,8 +1596,8 @@ class CloudView(object):
         
         for i, label in enumerate(labels):
             if label == '_ct':
-                # State 1: Unselected CT points - light gray
-                colors[i] = [0.7, 0.7, 0.7]
+                # State 1: Unselected CT points - bright white
+                colors[i] = [1.0, 1.0, 1.0]
             elif label == '_selected':
                 # State 1: Unselected electrodes - darker gray  
                 colors[i] = [0.5, 0.5, 0.5]
@@ -1670,18 +1712,17 @@ class AxisView(CloudView):
         self._text_actors = []
 
     def plot(self):
+        log.debug("AxisView.plot: Starting RAS axis plotting")
         coords = self.ct._points.coordinates
         center = np.array([0.5*(coords[:,i].max() + coords[:,i].min()) for i in range(3)])
         u,v,w,t = self.ct.affine.T
         max_dist = np.abs(coords-center).max()
+        log.debug(f"AxisView.plot: center={center}, max_dist={max_dist}")
         # axis = [1, 0 , 0] this refers to R and L labeling.
         # axis = [0, 1, 0] this refers to A and P labeling.
         # axis = [0, 0, 1] this refers to S and I labeling.
         try:
             name_pair_list = [['R','L'],['A','P'],['S','I']]
-            if (self.ct.coordSystem == 'LAS'):
-                # Swap the order of R and L
-                name_pair_list[0] = ['L', 'R']
             # If any elements of u, v or w are less than 1e-4, treat them as 0.
             u[np.abs(u)<1e-4] = 0.0
             v[np.abs(v)<1e-4] = 0.0
@@ -1689,6 +1730,7 @@ class AxisView(CloudView):
             u = np.int32(np.sign(u))
             v = np.int32(np.sign(v))
             w = np.int32(np.sign(w))
+            log.debug(f"AxisView.plot: Coordinate system directions: u={u}, v={v}, w={w}")
             for i, axis in enumerate(zip((u,v,w))):
                 # axis is a 3-tuple, find the index of the element which is closest to 1 (or -1)
                 axis = axis[0] # tuple to list
@@ -1697,6 +1739,7 @@ class AxisView(CloudView):
                 assert len(nonZero) == 1
                 selectedAxis = int(nonZero[0][0])  # Fix indexing issue
                 name_pair = name_pair_list[selectedAxis]
+                log.debug(f"AxisView.plot: Processing axis {i}, selectedAxis={selectedAxis}, name_pair={name_pair}")
                 for name in name_pair:
                     location  = center.copy()
                     if name is name_pair[0]:
@@ -1706,14 +1749,29 @@ class AxisView(CloudView):
                         loc = max_dist*1.25 * np.sign(axis[selectedAxis])
                         location[i] -= loc
                     
+                    # Determine color based on anatomical direction
+                    color = 'white'  # Default color
+                    if name in ['A', 'P']:  # Anterior-Posterior: Red
+                        color = 'red'
+                    elif name in ['L', 'R']:  # Left-Right: Green  
+                        color = 'green'
+                    elif name in ['S', 'I']:  # Superior-Inferior: Blue
+                        color = 'blue'
+                    
+                    log.debug(f"AxisView.plot: Adding text '{name}' at location {location} with color {color}")
                     # Use PyVista text instead of mlab.text3d
                     text_name = f"axis_text_{name}_{i}"
                     text_actor = self.scene.add_text(
                         name, 
                         position=location, 
-                        name=text_name
+                        name=text_name,
+                        font_size=24,  # Larger font for better visibility
+                        color=color,
+                        bold=True
                     )
+                    log.debug(f"AxisView.plot: Text actor created: {text_actor is not None}")
                     self._text_actors.append(text_name)
+            log.debug(f"AxisView.plot: Completed RAS axis plotting. Created {len(self._text_actors)} text actors")
         except TypeError as e:
             log.error("Could not plot RAS axes: {}".format(e))
         except IndexError as e:

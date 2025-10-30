@@ -545,7 +545,7 @@ class CT(object):
         self.affine = None
         self.gridmap = None
         self.centerCoord = None
-        self.coordSystem = 'RAS'
+        self.coordSystem = 'LAS'  # Default to LAS for radiological perspective (L/R swapped)
         self.originalShape = None
         self.transformedShape = None
         self.originalToTransformed = None
@@ -938,6 +938,117 @@ class CT(object):
                                              self._points.coordinates[:, 2]]).T
         
         # Now run through all the leads and swap the L and R (first) axis
+
+
+class MRI(object):
+    """MRI class for loading and processing T1 images for overlay"""
+    
+    def __init__(self, config):
+        super(MRI, self).__init__()
+        self.config = config
+        self.filename = None
+        self.data = None
+        self.affine = None
+        self.originalShape = None
+        self.opacity = 0.5
+        self.threshold = 0.05  # Threshold for surface extraction (lowered for better 3D surface)
+        
+    def load_scan(self, img_file):
+        """Load MRI scan from file"""
+        try:
+            self.filename = img_file
+            log.debug(f"Loading MRI from {img_file}")
+            
+            img = nib.load(self.filename)
+            self.data = img.get_fdata().squeeze()
+            self.affine = img.affine
+            self.originalShape = self.data.shape
+            
+            # Normalize data to 0-1 range for better visualization
+            if self.data.max() > 0:
+                self.data = self.data / self.data.max()
+            
+            log.debug(f"MRI loaded: shape={self.originalShape}, affine shape={self.affine.shape}")
+            return True
+            
+        except Exception as e:
+            log.error(f"Failed to load MRI: {e}")
+            return False
+    
+    def get_surface_mesh(self, threshold=None):
+        """Extract surface mesh from MRI data using PyVista contour OR volume rendering"""
+        try:
+            import pyvista as pv
+            
+            if self.data is None:
+                log.error("No MRI data loaded")
+                return None
+                
+            # Create structured grid from volume data
+            volume = pv.ImageData(dimensions=self.data.shape)
+            volume['values'] = self.data.flatten(order='F')
+            
+            # Apply affine transformation if available
+            if self.affine is not None:
+                # Set spacing and origin from affine matrix
+                spacing = np.abs(np.diag(self.affine[:3, :3]))
+                origin = self.affine[:3, 3]
+                volume.spacing = spacing
+                volume.origin = origin
+            
+            # First, let's check the data range to pick better thresholds
+            data_min = self.data.min()
+            data_max = self.data.max()
+            data_mean = self.data.mean()
+            data_std = self.data.std()
+            log.debug(f"MRI data range: min={data_min:.3f}, max={data_max:.3f}, mean={data_mean:.3f}, std={data_std:.3f}")
+            
+            # Instead of surface extraction, return the volume for volume rendering
+            # This avoids the 2D slice issue we're seeing with contour
+            log.debug(f"Returning volume mesh for volume rendering: {volume.n_points} points")
+            log.debug(f"Volume bounds: {volume.bounds}")
+            log.debug(f"Volume center: {volume.center}")
+            return volume
+            
+        except Exception as e:
+            log.error(f"Failed to create volume mesh: {e}")
+            return None
+    
+    def get_volume_mesh(self):
+        """Create volume mesh from MRI data for volume rendering"""
+        try:
+            import pyvista as pv
+            
+            if self.data is None:
+                log.error("No MRI data loaded")
+                return None
+            
+            # Create structured grid from volume data
+            mesh = pv.ImageData(dimensions=self.data.shape)
+            mesh['values'] = self.data.flatten(order='F')
+            
+            # Apply affine transformation if available
+            if self.affine is not None:
+                # Set spacing and origin from affine matrix
+                spacing = np.abs(np.diag(self.affine[:3, :3]))
+                origin = self.affine[:3, 3]
+                mesh.spacing = spacing
+                mesh.origin = origin
+            
+            log.debug(f"MRI volume mesh created: shape={self.data.shape}")
+            return mesh
+            
+        except Exception as e:
+            log.error(f"Failed to create volume mesh: {e}")
+            return None
+    
+    def set_opacity(self, opacity):
+        """Set opacity value (0.0 to 1.0)"""
+        self.opacity = max(0.0, min(1.0, opacity))
+    
+    def set_threshold(self, threshold):
+        """Set threshold for surface extraction"""
+        self.threshold = threshold
         for lead in self._leads.values():
             for contact in lead.contacts.values():
                 contact.switch_RAS_LAS(self.shape[0])
