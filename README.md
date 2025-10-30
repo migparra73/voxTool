@@ -1,25 +1,46 @@
 # VoxTool 2.0
 
+## Installation
 
-## Setup
+### Prerequisites
+- Anaconda or Miniconda installed on your system
+- Git for cloning the repository
 
-- Clone the repository from GitHub
-- Create a Conda environment from the definition file
-  ```
-  conda env create -f conda_env_linux_py3.yml
-  or
-  conda env create -f environment_windows.yml
-  ```
-  This creates an environment named `vt` in which to run voxTool.
+### Setup Instructions
+
+1. **Clone the repository from GitHub:**
+   ```bash
+   git clone https://github.com/migparra73/voxTool.git
+   cd voxTool
+   ```
+
+2. **Create a Conda environment from the definition file:**
+   
+   **For Windows:**
+   ```bash
+   conda env create -f environment_windows.yaml
+   ```
+   
+   This creates a conda environment with all required dependencies for running voxTool.
+
+3. **Activate the conda environment:**
+   ```bash
+   conda activate voxtool
+   ```
+
+4. **Launch the program:**
+   ```bash
+   python launch_pyloc.py
+   ```
 
 ## Running
 
 - Activate the conda environment:
-  ```
-  source activate vt
+  ```bash
+  conda activate voxtool
   ```
 - Launch the program:
-  ```
+  ```bash
   python launch_pyloc.py
   ```
 
