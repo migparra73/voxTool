@@ -43,19 +43,12 @@ Dependencies:
 - numpy: Numerical computing and array operations
 - math: Mathematical functions and constants
 - scipy (optional): Advanced optimization algorithms
-
-Author: Xavier Islam (islamx@seas.upenn.edu)
-Contributors: VoxTool Development Team
-Copyright: 2016, University of Pennsylvania
-License: See LICENSE.txt
 """
 
 """ This utility module interpolates all electrode grids in a strip or grid configuration.
 """
 
 __version__ = '0.1'
-__author__ = 'Xavier Islam'
-__email__ = 'islamx@seas.upenn.edu'
 __copyright__ = "Copyright 2016, University of Pennsylvania"
 __credits__ = ["iped", "islamx", "lkini", "srdas",
                "jmstein", "kadavis"]

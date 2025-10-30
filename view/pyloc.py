@@ -51,9 +51,6 @@ Dependencies:
 - numpy/scipy: Numerical computing
 - traits/traitsui: Observable properties and GUI binding
 - yaml: Configuration file management
-
-Author: VoxTool Development Team
-License: See LICENSE.txt
 """
 
 print("pyloc: Starting imports...")

@@ -40,9 +40,6 @@ Dependencies:
 - PySide6: Qt6 GUI framework and windowing
 - numpy: Numerical array operations
 - traits/traitsui: Observable properties (future integration)
-
-Author: VoxTool Development Team
-License: See LICENSE.txt
 """
 
 __author__ = 'iped'

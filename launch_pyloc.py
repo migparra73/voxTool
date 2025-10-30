@@ -67,18 +67,8 @@ Run directly from command line:
 ```bash
 python launch_pyloc.py
 ```
-
-Or from bundled executable:
-```bash
-./voxTool.exe  # Windows
-./voxTool      # Linux/macOS
-```
-
-Author: VoxTool Development Team
-License: See LICENSE.txt
 """
 
-__author__ = 'iped'
 import os
 import sys
 

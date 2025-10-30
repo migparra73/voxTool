@@ -59,9 +59,6 @@ Dependencies:
 ------------
 - csv: Standard CSV file parsing
 - logging: Diagnostic output for medical data validation
-
-Author: VoxTool Development Team
-License: See LICENSE.txt
 """
 
 import csv

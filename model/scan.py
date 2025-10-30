@@ -43,9 +43,6 @@ Dependencies:
 - scipy: Scientific computing (image processing)
 - json: Data serialization
 - logging: Diagnostic output
-
-Author: VoxTool Development Team
-License: See LICENSE.txt
 """
 
 import nibabel as nib
